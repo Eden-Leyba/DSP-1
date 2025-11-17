@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.Scanner;
 
 public class Main {
-    public static void main(String[] args) {
+    public static void main2(String[] args) {
         String model = "edu/stanford/nlp/models/lexparser/englishPCFG.ser.gz";
         LexicalizedParser lp = LexicalizedParser.loadModel(model);
 
