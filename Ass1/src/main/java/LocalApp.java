@@ -1,5 +1,6 @@
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.ec2.Ec2Client;
+import software.amazon.awssdk.services.ec2.*;
 import software.amazon.awssdk.services.ec2.model.*;
 import software.amazon.awssdk.services.ec2.model.Tag;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -68,6 +69,16 @@ public class LocalApp {
 
         for (Reservation reservation : response.reservations()) {
             for (Instance instance : reservation.instances()) {
+                SqsClient sqs = SqsClient.builder().region(region).build();
+                String queue_name = "LocalsOutput";
+                try {
+                    CreateQueueRequest request = CreateQueueRequest.builder()
+                            .queueName(queue_name)
+                            .build();
+                    CreateQueueResponse create_result = sqs.createQueue(request);
+                } catch (QueueNameExistsException e) {
+                    System.err.println("QueueNameExistsException: " + e.getMessage());
+                }
                 return true;
             }
         }
@@ -75,7 +86,7 @@ public class LocalApp {
         return false;
     }
 
-    public static void main(String[] args) {
+    public static void LocalMain(String[] args) {
         ec2 = Ec2Client.builder()
                 .region(region)
                 .build();
@@ -130,15 +141,15 @@ public class LocalApp {
         SqsClient sqs = SqsClient.builder().region(region).build();
 
         // Create LocalsOutput SQS queue
-        String queue_name = "LocalsOutput";
-        try {
-            CreateQueueRequest request = CreateQueueRequest.builder()
-                    .queueName(queue_name)
-                    .build();
-            CreateQueueResponse create_result = sqs.createQueue(request);
-        } catch (QueueNameExistsException e) {
-            System.err.println("QueueNameExistsException: " + e.getMessage());
-        }
+//        String queue_name = "LocalsOutput";
+//        try {
+//            CreateQueueRequest request = CreateQueueRequest.builder()
+//                    .queueName(queue_name)
+//                    .build();
+//            CreateQueueResponse create_result = sqs.createQueue(request);
+//        } catch (QueueNameExistsException e) {
+//            System.err.println("QueueNameExistsException: " + e.getMessage());
+//        }
 
         GetQueueUrlRequest getQueueRequest = GetQueueUrlRequest.builder()
                 .queueName(queue_name)
