@@ -1,5 +1,5 @@
 
-class dispacher {
+class Dispatcher {
     public static void main(String[] args) throws Exception {
         if (args.length == 1){
             if(args[0].equals("Manager"))

@@ -69,21 +69,48 @@ public class LocalApp {
 
         for (Reservation reservation : response.reservations()) {
             for (Instance instance : reservation.instances()) {
-                SqsClient sqs = SqsClient.builder().region(region).build();
-                String queue_name = "LocalsOutput";
-                try {
-                    CreateQueueRequest request = CreateQueueRequest.builder()
-                            .queueName(queue_name)
-                            .build();
-                    CreateQueueResponse create_result = sqs.createQueue(request);
-                } catch (QueueNameExistsException e) {
-                    System.err.println("QueueNameExistsException: " + e.getMessage());
-                }
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static String getSQSQueue(String queue_name) {
+        //todo if queue exists, return its url, otherwise return null
+        SqsClient sqs = SqsClient.builder().region(region).build();
+        try {
+            GetQueueUrlRequest getQueueRequest = GetQueueUrlRequest.builder()
+                    .queueName(queue_name)
+                    .build();
+            return sqs.getQueueUrl(getQueueRequest).queueUrl();
+        } catch (QueueDoesNotExistException e) {
+            return null;
+        }
+    }
+
+    private static void BuildLocalsOutputQueue() {
+        //check if there is already a queue with that name
+        //if exists - delete all messages from the queue
+        //if not exists - create it
+
+        //todo
+        // if getSQSQueue("LocalsOutput")!=null
+        //       delete all messages from the queue (?)
+        // else
+
+        //todo
+        SqsClient sqs = SqsClient.builder().region(region).build();
+        String queue_name = "LocalsOutput";
+        try {
+            CreateQueueRequest request = CreateQueueRequest.builder()
+                    .queueName(queue_name)
+                    .build();
+            CreateQueueResponse create_result = sqs.createQueue(request);
+        } catch (QueueNameExistsException e) {
+            //If in a race condition 2 locals are trying to create the queue, just print a log msg and move on
+            System.out.println("QueueNameExistsException: " + e.getMessage());
+        }
     }
 
     public static void LocalMain(String[] args) {
@@ -95,11 +122,14 @@ public class LocalApp {
                 outputFileName  = args[1];
         int     n               = Integer.parseInt(args[2]);
 
+        String queue_url;
+
         if (is_manager_running()) {
             System.out.println("Manager is running!");
         } else {
             try {
                 RunManagerEC2Instance();
+                BuildLocalsOutputQueue();
             } catch (Ec2Exception e) {
                 System.out.println("Could not run EC2 Manager instance: " + e.getMessage());
                 ec2.close();
@@ -107,13 +137,15 @@ public class LocalApp {
             }
         }
 
+        queue_url = getSQSQueue("LocalsOutput");
+
         //Initialize AmazonUtils Object
         AmazonUtils amazonUtils = new AmazonUtils(region);
 
         bucket_name = "dsp1-task1-" + System.currentTimeMillis();
         //Create a bucket
         try {
-            AmazonUtils.createBucket(bucket_name);
+            AmazonUtils.S3.createBucket(bucket_name);
         }
         catch (S3Exception e) {
             System.err.println("AWS S3 error: " + e.awsErrorDetails().errorMessage());
@@ -126,7 +158,7 @@ public class LocalApp {
         File inputFile = new File(inputFileName);
         String key = "local-app-" + inputFileName;
         try {
-            AmazonUtils.S3UploadFile(bucket_name, key, inputFile);
+            AmazonUtils.S3.UploadFile(bucket_name, key, inputFile);
         } catch (IOException e) {
             System.err.println("IOException: " + e.getMessage());
         }
@@ -151,16 +183,12 @@ public class LocalApp {
 //            System.err.println("QueueNameExistsException: " + e.getMessage());
 //        }
 
-        GetQueueUrlRequest getQueueRequest = GetQueueUrlRequest.builder()
-                .queueName(queue_name)
-                .build();
-        String queueUrl = sqs.getQueueUrl(getQueueRequest).queueUrl();
-        System.out.println(queueUrl);
+
 
         // send message
         String message_body = bucket_name + "\n" + key;
         SendMessageRequest send_msg_request = SendMessageRequest.builder()
-                .queueUrl(queueUrl)
+                .queueUrl(queue_url)
                 .messageBody(message_body)
                 .build();
         sqs.sendMessage(send_msg_request);
@@ -168,7 +196,7 @@ public class LocalApp {
 
         //receive message
         ReceiveMessageRequest receiveRequest = ReceiveMessageRequest.builder()
-                .queueUrl(queueUrl)
+                .queueUrl(queue_url)
                 .build();
         List<Message> messages = sqs.receiveMessage(receiveRequest).messages();
 
@@ -180,7 +208,7 @@ public class LocalApp {
 
         //Get the file from S3
         try {
-            AmazonUtils.S3GetSmallFile(received_bucket_name, received_key);
+            AmazonUtils.S3.GetSmallFile(received_bucket_name, received_key);
         } catch (IOException e) {
             System.err.println("IOException: " + e.getMessage());
         }
