@@ -5,7 +5,7 @@ public class Manager {
     static Thread workers_thread;
     static Thread localsListenerThread;
 
-    public static  void main(String[] args)
+    public static void main2(String[] args)
     {
         AmazonUtils.SQS.buildQueue(Config.workers_output_queue_name);
         AmazonUtils.SQS.buildQueue(Config.workers_input_queue_name);

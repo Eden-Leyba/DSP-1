@@ -24,12 +24,14 @@ public class LocalApp {
 //    }
 
     public static void main(String[] args) {
-        String  inputFileName   = args[0],
-                outputFileName  = args[1];
-        int     n               = Integer.parseInt(args[2]);
+//        String  inputFileName   = args[0],
+//                outputFileName  = args[1];
+//        int     n               = Integer.parseInt(args[2]);
 
         String locals_output_queue_url;
         String locals_input_queue_url;
+
+        System.out.println(System.currentTimeMillis());
 
         //Checks if a Manager node is active on the EC2 cloud. If it is not, the application will start the
         //manager node.
@@ -37,7 +39,17 @@ public class LocalApp {
             System.out.println("Manager is running!");
         } else {
             try {
-                String script = "echo 'This machine is running'";
+//                String script = "echo 'This machine is running'";
+                String script = "#!/bin/bash\n" +
+                        "yum update -y\n" +
+                        "yum install -y java-17-amazon-corretto-headless awscli\n" +
+                        "\n" +
+                        "# Download JAR from S3\n" +
+                        "aws s3 cp s3://" + "jars-1763844625474" + "/" + "Test_instance.jar" + " /home/ec2-user/app.jar\n" +
+                        "cd /home/ec2-user\n" +
+                        "\n" +
+                        "# Run the JAR in background, with logs\n" +
+                        "nohup java -jar app.jar > app.log 2>&1 &\n";
                 String amiId = "ami-0cae6d6fe6048ca2c";
                 AmazonUtils.EC2.RunEC2InstanceWithSpecificTag(amiId, Config.instances_tag_name, Config.manager_role_value, script);
 
@@ -49,7 +61,7 @@ public class LocalApp {
                 System.exit(1);
             }
         }
-
+/*
         locals_output_queue_url =  AmazonUtils.SQS.getQueueURL(Config.locals_output_queue_name);
         locals_input_queue_url = AmazonUtils.SQS.getQueueURL(Config.locals_input_queue_name);
 
@@ -86,7 +98,7 @@ public class LocalApp {
         String message_body = bucket_name + "\n" + key + "\n" + n;
         AmazonUtils.SQS.sendMessage(locals_output_queue_url ,message_body);
         System.out.println("Sent message: " + message_body);
-
+*/
         /*
         // Checks an SQS queue for a message indicating the process is done and the response (the
         //summary file) is available on S3.

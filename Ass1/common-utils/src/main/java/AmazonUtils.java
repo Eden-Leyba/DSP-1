@@ -94,6 +94,8 @@ public class AmazonUtils {
             } catch (S3Exception e) {
                 System.err.println("S3 error: " + e.awsErrorDetails().errorMessage());
             }
+
+            return "";
         }
 
         private static void putObject(String bucketName, String key, File file)
