@@ -32,21 +32,31 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.services.s3.model.*;
 import software.amazon.awssdk.core.exception.*;
+import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.model.*;
 
 public class AmazonUtils {
-    private static S3Client s3;
-    private static final int mb = 1024 * 1024;
-    private static final int LARGE_FILE_SIZE = 100 * mb;
-    private static Region region;
+    // ONE region for the whole assignment:
+    private static final Region REGION = Region.US_EAST_1;   // or whichever you use
 
-    public AmazonUtils(Region r) {
-        region = r;
-        s3 = S3Client.builder().region(region).build();
-    }
+    private static final int MB = 1024 * 1024;
+    private static final int LARGE_FILE_SIZE = 100 * MB;
 
-    public class S3 {
+    // shared clients
+    private static final S3Client s3 = S3Client.builder()
+            .region(REGION)
+            .build();
+
+    static final SqsClient sqs = SqsClient.builder()
+            .region(REGION)
+            .build();
+
+
+    // ===================== S3 =====================
+    public static class S3 {
+
         public static void createBucket(String bucket) throws S3Exception, SdkClientException {
-            if (region == Region.US_EAST_1) {
+            if (REGION == Region.US_EAST_1) {
                 s3.createBucket(CreateBucketRequest.builder()
                         .bucket(bucket)
                         .build());
@@ -55,36 +65,37 @@ public class AmazonUtils {
                         .bucket(bucket)
                         .createBucketConfiguration(
                                 CreateBucketConfiguration.builder()
-                                        .locationConstraint(region.id())
+                                        .locationConstraint(REGION.id())
                                         .build())
                         .build());
             }
 
-            System.out.println(bucket);
+            System.out.println("Created bucket: " + bucket);
         }
 
-        public static void UploadFile(String bucketName, String key, File file) throws IOException, S3Exception, SdkClientException {
-            if(file.length() > LARGE_FILE_SIZE) {
+        public static void uploadFile(String bucketName, String key, File file)
+                throws IOException, S3Exception, SdkClientException {
+
+            if (file.length() > LARGE_FILE_SIZE) {
                 multipartUpload(bucketName, key, file);
-            }
-            else {
-                PutObject(bucketName, key, file);
+            } else {
+                putObject(bucketName, key, file);
             }
         }
 
-        public static void GetSmallFile(String bucketName, String key) throws IOException, SdkClientException {
+        public static void getSmallFile(String bucketName, String key)
+                throws IOException, SdkClientException {
+
             try {
                 GetObjectRequest request = GetObjectRequest.builder()
                         .bucket(bucketName)
                         .key(key)
                         .build();
 
-                ResponseBytes<?> objectBytes =
+                ResponseBytes<GetObjectResponse> objectBytes =
                         s3.getObject(request, ResponseTransformer.toBytes());
 
-                byte[] data = objectBytes.asByteArray();
-                String text = new String(data);
-
+                String text = new String(objectBytes.asByteArray());
                 System.out.println("Object content:");
                 System.out.println(text);
 
@@ -93,88 +104,137 @@ public class AmazonUtils {
             }
         }
 
-        private static void PutObject(String bucketName, String key, File file) throws IOException, S3Exception, SdkClientException {
+        private static void putObject(String bucketName, String key, File file)
+                throws IOException, S3Exception, SdkClientException {
+
             PutObjectRequest putRequest = PutObjectRequest.builder()
                     .bucket(bucketName)
                     .key(key)
                     .contentType("text/plain")
                     .build();
 
-            s3.putObject(putRequest, RequestBody.fromInputStream(new FileInputStream(file), file.length()));
+            try (FileInputStream fis = new FileInputStream(file)) {
+                s3.putObject(putRequest,
+                        RequestBody.fromInputStream(fis, file.length()));
+            }
         }
 
-        private static void multipartUpload(String bucketName, String key, File file) throws IOException, S3Exception, SdkClientException {
-            //minimum number of bytes in one part according to aws docs: https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
-            int part_num_bytes = 5 * mb;
+        private static void multipartUpload(String bucketName, String key, File file)
+                throws IOException, S3Exception, SdkClientException {
 
-            // First create a multipart upload and get upload id
-            CreateMultipartUploadRequest createMultipartUploadRequest = CreateMultipartUploadRequest.builder()
-                    .bucket(bucketName).key(key)
-                    .build();
-            CreateMultipartUploadResponse response = s3.createMultipartUpload(createMultipartUploadRequest);
-            String uploadId = response.uploadId();
-            System.out.println(uploadId);
+            int partNumBytes = 5 * MB; // minimum recommended by AWS
 
-            // Split the file into parts with part_num_bytes in each of them, and Upload all the different parts of the object
-            FileInputStream fis = new FileInputStream(file);
-
-            byte[] buffer = new byte[part_num_bytes];
-            int partNumber = 1;
-            int bytesRead;
-            List<CompletedPart> completedParts = new ArrayList<>();
-
-            while ((bytesRead = fis.read(buffer)) != -1) {
-                ByteBuffer byteBuffer = ByteBuffer.wrap(buffer.clone(), 0, bytesRead);
-
-                UploadPartRequest uploadPartRequest = UploadPartRequest
-                        .builder()
-                        .bucket(bucketName)
-                        .key(key)
-                        .uploadId(uploadId)
-                        .partNumber(partNumber).build();
-
-                String etag = s3.uploadPart(
-                        uploadPartRequest,
-                        RequestBody.fromByteBuffer(byteBuffer)
-                ).eTag();
-
-                CompletedPart part = CompletedPart
-                        .builder()
-                        .partNumber(partNumber)
-                        .eTag(etag)
-                        .build();
-                completedParts.add(part);
-
-                partNumber++;
-            }
-
-            fis.close();
-
-            CompletedMultipartUpload completedMultipartUpload = CompletedMultipartUpload
-                    .builder()
-                    .parts(completedParts)
-                    .build();
-
-            CompleteMultipartUploadRequest completeMultipartUploadRequest = CompleteMultipartUploadRequest
-                    .builder()
+            CreateMultipartUploadRequest createReq = CreateMultipartUploadRequest.builder()
                     .bucket(bucketName)
                     .key(key)
-                    .uploadId(uploadId)
-                    .multipartUpload(completedMultipartUpload).build();
+                    .build();
 
-            s3.completeMultipartUpload(completeMultipartUploadRequest);
+            CreateMultipartUploadResponse response = s3.createMultipartUpload(createReq);
+            String uploadId = response.uploadId();
+            System.out.println("UploadId: " + uploadId);
+
+            List<CompletedPart> completedParts = new ArrayList<>();
+
+            try (FileInputStream fis = new FileInputStream(file)) {
+                byte[] buffer = new byte[partNumBytes];
+                int partNumber = 1;
+                int bytesRead;
+
+                while ((bytesRead = fis.read(buffer)) != -1) {
+                    ByteBuffer byteBuffer = ByteBuffer.wrap(buffer, 0, bytesRead);
+
+                    UploadPartRequest uploadPartRequest = UploadPartRequest.builder()
+                            .bucket(bucketName)
+                            .key(key)
+                            .uploadId(uploadId)
+                            .partNumber(partNumber)
+                            .build();
+
+                    String etag = s3.uploadPart(
+                            uploadPartRequest,
+                            RequestBody.fromByteBuffer(byteBuffer)
+                    ).eTag();
+
+                    completedParts.add(
+                            CompletedPart.builder()
+                                    .partNumber(partNumber)
+                                    .eTag(etag)
+                                    .build()
+                    );
+
+                    partNumber++;
+                }
+            }
+
+            CompletedMultipartUpload completedMultipartUpload =
+                    CompletedMultipartUpload.builder()
+                            .parts(completedParts)
+                            .build();
+
+            CompleteMultipartUploadRequest completeReq =
+                    CompleteMultipartUploadRequest.builder()
+                            .bucket(bucketName)
+                            .key(key)
+                            .uploadId(uploadId)
+                            .multipartUpload(completedMultipartUpload)
+                            .build();
+
+            s3.completeMultipartUpload(completeReq);
         }
     }
 
 
-    public class SQS {
-        //todo
-        // String getQueueURL(String queue_name)
-        // void buildQueue(String queue_name)
-        // void SendMessage(String queue_url, String message)
-        // void ReceiveMessage(String queue_url)
+    // ===================== SQS =====================
+    public static class SQS {
 
+        public static String getQueueURL(String queueName) {
+            try {
+                GetQueueUrlRequest getQueueRequest = GetQueueUrlRequest.builder()
+                        .queueName(queueName)
+                        .build();
+                return sqs.getQueueUrl(getQueueRequest).queueUrl();
+            } catch (QueueDoesNotExistException e) {
+                return null;
+            }
+        }
+
+        public static void buildQueue(String queueName) {
+            try {
+                CreateQueueRequest request = CreateQueueRequest.builder()
+                        .queueName(queueName)
+                        .build();
+                sqs.createQueue(request);
+                System.out.println("Created queue: " + queueName);
+            } catch (QueueNameExistsException e) {
+                System.out.println("Queue already exists: " + queueName);
+            }
+        }
+
+        public static String getOrCreateQueueUrl(String queueName) {
+            String url = getQueueURL(queueName);
+            if (url != null) return url;
+
+            buildQueue(queueName);
+            return getQueueURL(queueName);
+        }
+
+        public static void sendMessage(String queueUrl, String message) {
+            SendMessageRequest sendReq = SendMessageRequest.builder()
+                    .queueUrl(queueUrl)
+                    .messageBody(message)
+                    .build();
+            sqs.sendMessage(sendReq);
+            System.out.println("Sent message: " + message);
+        }
+
+        public static String receiveFirstMessages(String queueUrl) {
+            ReceiveMessageRequest receiveRequest = ReceiveMessageRequest.builder()
+                    .queueUrl(queueUrl)
+                    .build();
+
+            return sqs.receiveMessage(receiveRequest).messages().get(0).body();
+        }
 
     }
-
 }
+

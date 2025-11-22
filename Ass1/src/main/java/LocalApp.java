@@ -76,47 +76,31 @@ public class LocalApp {
         return false;
     }
 
-    private static String getSQSQueue(String queue_name) {
-        //todo if queue exists, return its url, otherwise return null
-        SqsClient sqs = SqsClient.builder().region(region).build();
-        try {
-            GetQueueUrlRequest getQueueRequest = GetQueueUrlRequest.builder()
-                    .queueName(queue_name)
-                    .build();
-            return sqs.getQueueUrl(getQueueRequest).queueUrl();
-        } catch (QueueDoesNotExistException e) {
-            return null;
-        }
-    }
+//    private static String getSQSQueue(String queue_name) {
+//        //todo if queue exists, return its url, otherwise return null
+//        SqsClient sqs = SqsClient.builder().region(region).build();
+//        try {
+//            GetQueueUrlRequest getQueueRequest = GetQueueUrlRequest.builder()
+//                    .queueName(queue_name)
+//                    .build();
+//            return sqs.getQueueUrl(getQueueRequest).queueUrl();
+//        } catch (QueueDoesNotExistException e) {
+//            return null;
+//        }
+//    }
 
     private static void BuildLocalsOutputQueue() {
         //check if there is already a queue with that name
         //if exists - delete all messages from the queue
         //if not exists - create it
 
-        //todo
-        // if getSQSQueue("LocalsOutput")!=null
-        //       delete all messages from the queue (?)
-        // else
-
-        //todo
-        SqsClient sqs = SqsClient.builder().region(region).build();
-        String queue_name = "LocalsOutput";
-        try {
-            CreateQueueRequest request = CreateQueueRequest.builder()
-                    .queueName(queue_name)
-                    .build();
-            CreateQueueResponse create_result = sqs.createQueue(request);
-        } catch (QueueNameExistsException e) {
-            //If in a race condition 2 locals are trying to create the queue, just print a log msg and move on
-            System.out.println("QueueNameExistsException: " + e.getMessage());
-        }
     }
 
     public static void LocalMain(String[] args) {
         ec2 = Ec2Client.builder()
                 .region(region)
                 .build();
+
 
         String  inputFileName   = args[0],
                 outputFileName  = args[1];
@@ -137,7 +121,7 @@ public class LocalApp {
             }
         }
 
-        queue_url = getSQSQueue("LocalsOutput");
+        queue_url =  sqs.getQueueURL("LocalsOutput");
 
         //Initialize AmazonUtils Object
         AmazonUtils amazonUtils = new AmazonUtils(region);
@@ -170,7 +154,6 @@ public class LocalApp {
         }
 
         // SQS
-        SqsClient sqs = SqsClient.builder().region(region).build();
 
         // Create LocalsOutput SQS queue
 //        String queue_name = "LocalsOutput";
@@ -187,18 +170,14 @@ public class LocalApp {
 
         // send message
         String message_body = bucket_name + "\n" + key;
-        SendMessageRequest send_msg_request = SendMessageRequest.builder()
-                .queueUrl(queue_url)
-                .messageBody(message_body)
-                .build();
-        sqs.sendMessage(send_msg_request);
+        AmazonUtils.SQS.sendMessage(queue_url ,message_body);
         System.out.println("Sent message: " + message_body);
 
         //receive message
         ReceiveMessageRequest receiveRequest = ReceiveMessageRequest.builder()
                 .queueUrl(queue_url)
                 .build();
-        List<Message> messages = sqs.receiveMessage(receiveRequest).messages();
+        List<Message> messages = AmazonUtils.SQS.ReceiveMessage(queue_url);
 
         String received_message = messages.getFirst().body();
         System.out.println("Received message: " + received_message);
