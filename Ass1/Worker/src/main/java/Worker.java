@@ -1,5 +1,5 @@
 public class Worker {
-    public static void WorkerMain()
+    public static void main(String[] args)
     {
 
     }

@@ -1,74 +1,14 @@
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.ec2.Ec2Client;
 import software.amazon.awssdk.services.ec2.model.*;
-import software.amazon.awssdk.services.ec2.model.Tag;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
 import software.amazon.awssdk.core.exception.*;
-import software.amazon.awssdk.services.sqs.model.*;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Base64;
-import java.util.List;
 
 public class LocalApp {
-    static Ec2Client ec2;
-    static String manager_role_value = "manager";
+
     static String bucket_name;
-    static Region region = Region.US_EAST_1;
-
-    public static void RunManagerEC2Instance() throws Ec2Exception {
-        String amiId = "ami-0cae6d6fe6048ca2c";
-        String role = manager_role_value;
-
-        String script = "echo 'This machine is running'"; //run the manager jar
-        RunInstancesRequest runRequest = RunInstancesRequest.builder()
-                .instanceType(InstanceType.T1_MICRO)
-                .imageId(amiId)
-                .maxCount(1)
-                .minCount(1)
-                .keyName("dsp_lab")
-                .userData(Base64.getEncoder().encodeToString(script.getBytes()))
-                .build();
-
-        RunInstancesResponse response = ec2.runInstances(runRequest);
-
-        String instanceId = response.instances().get(0).instanceId();
-
-        Tag tag = Tag.builder() //Role:manager
-                .key("Role")
-                .value(role)
-                .build();
-
-        CreateTagsRequest tagRequest = CreateTagsRequest.builder()
-                .resources(instanceId)
-                .tags(tag)
-                .build();
-
-        ec2.createTags(tagRequest);
-        System.out.printf(
-                "Successfully started EC2 Manager instance %s based on AMI %s\n",
-                instanceId, amiId);
-    }
-
-    public static boolean is_manager_running() {
-        DescribeInstancesRequest req = DescribeInstancesRequest.builder()
-                .filters(
-                        Filter.builder().name("tag:Role").values(manager_role_value).build(),
-                        Filter.builder().name("instance-state-name").values("pending", "running").build()
-                )
-                .build();
-        DescribeInstancesResponse response = ec2.describeInstances(req);
-
-        for (Reservation reservation : response.reservations()) {
-            for (Instance instance : reservation.instances()) {
-                return true;
-            }
-        }
-
-        return false;
-    }
 
 //    private static String getSQSQueue(String queue_name) {
 //        //todo if queue exists, return its url, otherwise return null
@@ -83,43 +23,38 @@ public class LocalApp {
 //        }
 //    }
 
-    private static void BuildLocalsOutputQueue() {
-        //check if there is already a queue with that name
-        //if exists - delete all messages from the queue
-        //if not exists - create it
-
-    }
-
-    public static void LocalMain(String[] args) {
-        ec2 = Ec2Client.builder()
-                .region(region)
-                .build();
-
-
+    public static void main(String[] args) {
         String  inputFileName   = args[0],
                 outputFileName  = args[1];
         int     n               = Integer.parseInt(args[2]);
 
-        String queue_url;
+        String locals_output_queue_url;
+        String locals_input_queue_url;
 
-        if (is_manager_running()) {
+        //Checks if a Manager node is active on the EC2 cloud. If it is not, the application will start the
+        //manager node.
+        if (AmazonUtils.EC2.getNumEC2WithTagRunning(Config.instances_tag_name, Config.manager_role_value) == 1) {
             System.out.println("Manager is running!");
         } else {
             try {
-                RunManagerEC2Instance();
-                BuildLocalsOutputQueue();
+                String script = "echo 'This machine is running'";
+                String amiId = "ami-0cae6d6fe6048ca2c";
+                AmazonUtils.EC2.RunEC2InstanceWithSpecificTag(amiId, Config.instances_tag_name, Config.manager_role_value, script);
+
+                AmazonUtils.SQS.buildQueue(Config.locals_output_queue_name);
+                AmazonUtils.SQS.buildQueue(Config.locals_input_queue_name);
             } catch (Ec2Exception e) {
                 System.out.println("Could not run EC2 Manager instance: " + e.getMessage());
-                ec2.close();
+                AmazonUtils.EC2.CloseEc2Client();
                 System.exit(1);
             }
         }
 
-        queue_url =  sqs.getQueueURL("LocalsOutput");
+        locals_output_queue_url =  AmazonUtils.SQS.getQueueURL(Config.locals_output_queue_name);
+        locals_input_queue_url = AmazonUtils.SQS.getQueueURL(Config.locals_input_queue_name);
 
-        //Initialize AmazonUtils Object
-        AmazonUtils amazonUtils = new AmazonUtils(region);
-
+        //Uploads the input file to S3
+        //TODO: everytime we upload a file we create a new bucket, which may be an issue
         bucket_name = "dsp1-task1-" + System.currentTimeMillis();
         //Create a bucket
         try {
@@ -136,7 +71,7 @@ public class LocalApp {
         File inputFile = new File(inputFileName);
         String key = "local-app-" + inputFileName;
         try {
-            AmazonUtils.S3.UploadFile(bucket_name, key, inputFile);
+            AmazonUtils.S3.uploadFile(bucket_name, key, inputFile);
         } catch (IOException e) {
             System.err.println("IOException: " + e.getMessage());
         }
@@ -147,33 +82,19 @@ public class LocalApp {
             System.err.println("Client-side error: " + e.getMessage());
         }
 
-        // SQS
-
-        // Create LocalsOutput SQS queue
-//        String queue_name = "LocalsOutput";
-//        try {
-//            CreateQueueRequest request = CreateQueueRequest.builder()
-//                    .queueName(queue_name)
-//                    .build();
-//            CreateQueueResponse create_result = sqs.createQueue(request);
-//        } catch (QueueNameExistsException e) {
-//            System.err.println("QueueNameExistsException: " + e.getMessage());
-//        }
-
-
-
-        // send message
-        String message_body = bucket_name + "\n" + key;
-        AmazonUtils.SQS.sendMessage(queue_url ,message_body);
+        // Sends a message to an SQS queue, stating the location of the file on S3
+        String message_body = bucket_name + "\n" + key + "\n" + n;
+        AmazonUtils.SQS.sendMessage(locals_output_queue_url ,message_body);
         System.out.println("Sent message: " + message_body);
 
-        //receive message
+        /*
+        // Checks an SQS queue for a message indicating the process is done and the response (the
+        //summary file) is available on S3.
         ReceiveMessageRequest receiveRequest = ReceiveMessageRequest.builder()
-                .queueUrl(queue_url)
+                .queueUrl(locals_output_queue_url)
                 .build();
-        List<Message> messages = AmazonUtils.SQS.ReceiveMessage(queue_url);
+        String received_message = AmazonUtils.SQS.receiveFirstMessage(locals_output_queue_url);
 
-        String received_message = messages.getFirst().body();
         System.out.println("Received message: " + received_message);
         String[] received_message_parts = received_message.split("\n");
         String received_bucket_name = received_message_parts[0];
@@ -181,7 +102,7 @@ public class LocalApp {
 
         //Get the file from S3
         try {
-            AmazonUtils.S3.GetSmallFile(received_bucket_name, received_key);
+            AmazonUtils.S3.getSmallFile(received_bucket_name, received_key);
         } catch (IOException e) {
             System.err.println("IOException: " + e.getMessage());
         }
@@ -191,15 +112,14 @@ public class LocalApp {
         catch (SdkClientException e) {
             System.err.println("Client-side error: " + e.getMessage());
         }
+        */
 
-
-
-        ec2.close();
+        AmazonUtils.EC2.CloseEc2Client();
     }
 
     public static void DeleteAllS3Buckets() {
         //Delete all s3 buckets
-        S3Client s3 = S3Client.builder().region(region).build();
+        S3Client s3 = S3Client.builder().region(Config.region).build();
 
         ListBucketsResponse bucketsResponse = s3.listBuckets();
 

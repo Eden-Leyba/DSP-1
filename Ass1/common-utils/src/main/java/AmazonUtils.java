@@ -3,10 +3,14 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 
 import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.ec2.Ec2Client;
+import software.amazon.awssdk.services.ec2.model.*;
+import software.amazon.awssdk.services.ec2.model.Tag;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest;
 import software.amazon.awssdk.services.s3.model.CompletedMultipartUpload;
@@ -26,27 +30,25 @@ import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.*;
 
 public class AmazonUtils {
-    // ONE region for the whole assignment:
-    private static final Region REGION = Region.US_EAST_1;   // or whichever you use
 
     private static final int MB = 1024 * 1024;
     private static final int LARGE_FILE_SIZE = 100 * MB;
 
     // shared clients
-    private static final S3Client s3 = S3Client.builder()
-            .region(REGION)
-            .build();
 
-    static final SqsClient sqs = SqsClient.builder()
-            .region(REGION)
-            .build();
+
+
 
 
     // ===================== S3 =====================
     public static class S3 {
 
+        private static final S3Client s3 = S3Client.builder()
+                .region(Config.region)
+                .build();
+
         public static void createBucket(String bucket) throws S3Exception, SdkClientException {
-            if (REGION == Region.US_EAST_1) {
+            if (Config.region == Region.US_EAST_1) {
                 s3.createBucket(CreateBucketRequest.builder()
                         .bucket(bucket)
                         .build());
@@ -55,7 +57,7 @@ public class AmazonUtils {
                         .bucket(bucket)
                         .createBucketConfiguration(
                                 CreateBucketConfiguration.builder()
-                                        .locationConstraint(REGION.id())
+                                        .locationConstraint(Config.region.id())
                                         .build())
                         .build());
             }
@@ -73,7 +75,7 @@ public class AmazonUtils {
             }
         }
 
-        public static void getSmallFile(String bucketName, String key)
+        public static String getSmallFile(String bucketName, String key)
                 throws IOException, SdkClientException {
 
             try {
@@ -85,9 +87,9 @@ public class AmazonUtils {
                 ResponseBytes<GetObjectResponse> objectBytes =
                         s3.getObject(request, ResponseTransformer.toBytes());
 
-                String text = new String(objectBytes.asByteArray());
-                System.out.println("Object content:");
-                System.out.println(text);
+                return new String(objectBytes.asByteArray());
+//                System.out.println("Object content:");
+//                System.out.println(text);
 
             } catch (S3Exception e) {
                 System.err.println("S3 error: " + e.awsErrorDetails().errorMessage());
@@ -176,6 +178,9 @@ public class AmazonUtils {
 
     // ===================== SQS =====================
     public static class SQS {
+        static final SqsClient sqs = SqsClient.builder()
+                .region(Config.region)
+                .build();
 
         public static String getQueueURL(String queueName) {
             try {
@@ -217,12 +222,83 @@ public class AmazonUtils {
             System.out.println("Sent message: " + message);
         }
 
-        public static String receiveFirstMessages(String queueUrl) {
+        public static void DeleteMessage(String queueUrl, Message msg) {
+            sqs.deleteMessage(DeleteMessageRequest.builder()
+                    .queueUrl(queueUrl)
+                    .receiptHandle(msg.receiptHandle())
+                    .build());
+        }
+
+        public static String receiveFirstMessage(String queueUrl) {
             ReceiveMessageRequest receiveRequest = ReceiveMessageRequest.builder()
                     .queueUrl(queueUrl)
                     .build();
 
             return sqs.receiveMessage(receiveRequest).messages().get(0).body();
+        }
+
+    }
+
+    public static class EC2 {
+        static Ec2Client ec2 = Ec2Client.builder()
+                .region(Config.region)
+                .build();
+
+        public static void CloseEc2Client() {
+            ec2.close();
+        }
+
+        public static void RunEC2InstanceWithSpecificTag(String ami_id, String tag_name, String tag_value, String data_script) throws Ec2Exception {
+//            String amiId = "ami-0cae6d6fe6048ca2c";
+
+//            String script = "echo 'This machine is running'"; //run the manager jar
+            RunInstancesRequest runRequest = RunInstancesRequest.builder()
+                    .instanceType(InstanceType.T1_MICRO)
+                    .imageId(ami_id)
+                    .maxCount(1)
+                    .minCount(1)
+                    .keyName("dsp_lab")
+                    .userData(Base64.getEncoder().encodeToString(data_script.getBytes()))
+                    .build();
+
+            RunInstancesResponse response = ec2.runInstances(runRequest);
+
+            String instanceId = response.instances().get(0).instanceId();
+
+            Tag tag = Tag.builder()
+                    .key(tag_name)
+                    .value(tag_value)
+                    .build();
+
+            CreateTagsRequest tagRequest = CreateTagsRequest.builder()
+                    .resources(instanceId)
+                    .tags(tag)
+                    .build();
+
+            ec2.createTags(tagRequest);
+            System.out.printf(
+                    "Successfully started EC2 Manager instance %s based on AMI %s\n",
+                    instanceId, ami_id);
+        }
+
+        // Return the number of EC2 instances which are running with the provided tag
+        public static int getNumEC2WithTagRunning(String tag_name, String tag_value) {
+            DescribeInstancesRequest req = DescribeInstancesRequest.builder()
+                    .filters(
+                            Filter.builder().name("tag:"+tag_name).values(tag_value).build(),
+                            Filter.builder().name("instance-state-name").values("pending", "running").build()
+                    )
+                    .build();
+            DescribeInstancesResponse response = ec2.describeInstances(req);
+
+            int result = 0;
+            for (Reservation reservation : response.reservations()) {
+                for (Instance instance : reservation.instances()) {
+                    result++;
+                }
+            }
+
+            return result;
         }
 
     }
