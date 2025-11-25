@@ -41,60 +41,27 @@ public class LocalApp {
             System.out.println("Manager is running!");
         } else {
             try {
-                String script =
-                        "#!/bin/bash\n" +
-                        "mkdir /home/ec2-user/.aws \n"+
-                        "sudo su\n" +
-                        "yum update -y\n" +
-                        "yum install -y java-23-amazon-corretto-headless awscli\n";
-                        /*+"\n" +
-                        "echo " + credentials + " >> ~/.aws/credentials" +
-                        "# Download JAR from S3\n" +
-                        "aws s3 cp s3://jars-1763844625474/Test_instance.jar /home/ec2-user/app.jar" +"\n" +
-                        "cd /home/ec2-user\n" +
-                        "\n" +
-                        "# Run the JAR in background, with logs\n" +
-                        "nohup java -jar app.jar > app.log 2>&1 &\n"*/;
                 String amiId = "ami-0cae6d6fe6048ca2c";
-                String publicIp = AmazonUtils.EC2.RunEC2InstanceWithSpecificTag(amiId, Config.instances_tag_name, Config.manager_role_value, script);
-                System.out.println(publicIp);
-                Thread.sleep(10_000);
+//                int launched = AmazonUtils.EC2.LaunchMultipleInstances(
+//                        amiId,
+//                        InstanceType.T2_MICRO,
+//                        Config.instances_tag_name, Config.manager_role_value,
+//                        "jars-1763844625474",
+//                        "Test_Instance.jar",
+//                        2, 2
+//                );
 
-                System.out.println("Calling scp...\n");
-                ProcessBuilder p = new ProcessBuilder(
-                        "scp",
-                        "-o", "StrictHostKeyChecking=no",
-                        "-i",
-                        Config.aws_folder_path + "\\labsuser.pem",
-                        Config.aws_folder_path + "\\credentials",
-                        "ec2-user@" + publicIp + ":/home/ec2-user/credentials"
+                int launched = AmazonUtils.EC2.LaunchSingleInstance(
+                        amiId,
+                        InstanceType.T2_MICRO,
+                        Config.instances_tag_name, Config.manager_role_value,
+                        "jars-1763844625474",
+                        "Test_Instance.jar"
                 );
-                System.out.println(p.command());
-                p.inheritIO().start().waitFor();
 
-                // ssh -i "labsuser.pem" ec2-user@ec2-52-201-253-79.compute-1.amazonaws.com
-
-                String ssh_script = "sudo mv /home/ec2-user/credentials /home/ec2-user/.aws/credentials\n" +
-                        "aws s3 cp s3://jars-1763844625474/Test_Instance.jar /home/ec2-user/app.jar\n" +
-                        "cd /home/ec2-user\n" +
-                        "java -jar app.jar > app.log \n";
-
-                ProcessBuilder pb = new ProcessBuilder(
-                        "ssh",
-                        "-o", "StrictHostKeyChecking=no",
-                        "-i",
-                        Config.aws_folder_path + "\\labsuser.pem",
-                        "ec2-user@ec2-" + publicIp.replaceAll("\\.","-") + ".compute-1.amazonaws.com",
-                        "bash << 'EOF'\n" +
-                        "sudo mv /home/ec2-user/credentials /home/ec2-user/.aws/credentials\n" +
-                        "aws s3 cp s3://jars-1763844625474/Test_Instance.jar /home/ec2-user/app.jar\n" +
-                        "cd /home/ec2-user\n" +
-                        "sudo yum install -y java-23-amazon-corretto-headless \n" +
-                        "java -jar app.jar > app.log \n" +
-                        "EOF"
-                );
-                System.out.println(pb.command());
-                pb.inheritIO().start().waitFor();
+                if(launched == 0) {
+                    throw new RuntimeException("Could not create Manager Instance!");
+                }
 
                 AmazonUtils.SQS.buildQueue(Config.locals_output_queue_name);
                 AmazonUtils.SQS.buildQueue(Config.locals_input_queue_name);
@@ -103,7 +70,10 @@ public class LocalApp {
                 System.out.println("Could not run EC2 Manager instance: " + e.getMessage());
                 AmazonUtils.EC2.CloseEc2Client();
                 System.exit(1);
+            } catch (RuntimeException e) {
+                System.err.println(e.getMessage());
             }
+
         }
 /*
         locals_output_queue_url =  AmazonUtils.SQS.getQueueURL(Config.locals_output_queue_name);
