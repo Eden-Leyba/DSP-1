@@ -28,9 +28,9 @@ public class LocalsListenerRunnable implements Runnable {
                 .build();
 
         while (true) {
-            ReceiveMessageRequest request = ReceiveMessageRequest.builder()
-                    .queueUrl(locals_output_queue_url)
-                    .waitTimeSeconds(20)      // long polling (max allowed)
+                ReceiveMessageRequest request = ReceiveMessageRequest.builder()
+                        .queueUrl(locals_output_queue_url)
+                        .waitTimeSeconds(20)      // long polling (max allowed)
                     .maxNumberOfMessages(10)  // batch receive
                     .build();
 

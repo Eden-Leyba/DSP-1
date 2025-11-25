@@ -1,0 +1,33 @@
+Assignment 1 - Whats Left
+
+Local App
+- Gets the summary output file from S3
+- In case of terminate mode (as defined by the command-line argument), sends a termination message to the Manager.
+- Run occasional checks to see the manager is running, and if its not, launch it.
+
+The Manager
+In SubmitLocalTaskToThreadPool(): Launching the EC2 Workers should be at last priority (There is no data there, it takes time)
+- Properly start Worker EC2 clients
+- LocalThreadTask: What if its not a small file?
+- Database: locals_db: local_id, num_urls, num_done, output_summary_s3_path
+	1. Manager Main class should create database
+	2. In SubmitLocalTaskToThreadPool(): Add line to db, either in LocalThreadTask or in the big locals thread
+- WorkersOutput Thread
+- Terminate 
+
+Worker
+- Add parser
+- Queues: WorkersInput->Workers_Tasks_Incoming, WorkersOutput->Workers_Tasks_Done
+- Add SQS Queue: Workers_Tasks_InProgress
+
+Testing
+- OK
+- Manager & Local App & Worker crashing
+- termination 
+- wrong url 
+
+Other
+- Go over System Summary and check we did all 17 missions
+- Readme
+- Security
+
