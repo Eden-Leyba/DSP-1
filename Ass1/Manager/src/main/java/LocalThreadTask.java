@@ -55,9 +55,9 @@ public class LocalThreadTask implements Callable<Integer> {
             num_files_to_process++;
         }
 
-        float m_float = (float) num_files_to_process/n;
-        int m = (int) m_float;
-        if(m_float - m >= 0.5) m++;
+
+        int m = (int) ((float) (num_files_to_process/n) + 0.5);
+
 
         /*
         message:
