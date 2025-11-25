@@ -250,7 +250,7 @@ public class AmazonUtils {
             ec2.close();
         }
 
-        public static void RunEC2InstanceWithSpecificTag(String ami_id, String tag_name, String tag_value, String data_script) throws Ec2Exception {
+        public static String RunEC2InstanceWithSpecificTag(String ami_id, String tag_name, String tag_value, String data_script) throws Ec2Exception {
 //            String amiId = "ami-0cae6d6fe6048ca2c";
 
 //            String script = "echo 'This machine is running'"; //run the manager jar
@@ -259,13 +259,14 @@ public class AmazonUtils {
                     .imageId(ami_id)
                     .maxCount(1)
                     .minCount(1)
-                    .keyName("dsp_lab")
+                    .keyName("labsuser")
                     .userData(Base64.getEncoder().encodeToString(data_script.getBytes()))
                     .build();
 
             RunInstancesResponse response = ec2.runInstances(runRequest);
 
             String instanceId = response.instances().get(0).instanceId();
+
 
             Tag tag = Tag.builder()
                     .key(tag_name)
@@ -281,6 +282,15 @@ public class AmazonUtils {
             System.out.printf(
                     "Successfully started EC2 Manager instance %s based on AMI %s\n",
                     instanceId, ami_id);
+
+            String publicIp = ec2.describeInstances(
+                            DescribeInstancesRequest.builder()
+                                    .instanceIds(instanceId)
+                                    .build()
+                    ).reservations().get(0)
+                    .instances().get(0)
+                    .publicIpAddress();
+            return publicIp;
         }
 
         // Return the number of EC2 instances which are running with the provided tag
