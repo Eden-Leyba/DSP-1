@@ -4,8 +4,9 @@ public class Config {
 
     final static String locals_output_queue_name = "LocalsOutput";
     final static String locals_input_queue_name = "LocalsInput";
-    final static String workers_output_queue_name = "WorkersOutput";
-    final static String workers_input_queue_name = "WorkersInput";
+    final static String workers_done_queue_name = "Workers_Tasks_Done";
+    final static String workers_incoming_queue_name = "Workers_Tasks_Incoming";
+    final static String workers_inProgress_queue_name = "Workers_Tasks_InProgress";
 
     final static Region region = Region.US_EAST_1;
     final static String manager_role_value = "manager";

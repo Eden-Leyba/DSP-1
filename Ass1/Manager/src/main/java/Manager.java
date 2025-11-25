@@ -7,10 +7,13 @@ public class Manager {
 
     public static void main2(String[] args)
     {
-        AmazonUtils.SQS.buildQueue(Config.workers_output_queue_name);
-        AmazonUtils.SQS.buildQueue(Config.workers_input_queue_name);
-        String workers_output_queue_url =  AmazonUtils.SQS.getQueueURL(Config.workers_output_queue_name);
-        String workers_input_queue_url = AmazonUtils.SQS.getQueueURL(Config.workers_input_queue_name);
+        AmazonUtils.SQS.buildQueue(Config.workers_done_queue_name);
+        AmazonUtils.SQS.buildQueue(Config.workers_incoming_queue_name);
+        AmazonUtils.SQS.buildQueue(Config.workers_inProgress_queue_name);
+
+        String workers_output_queue_url =  AmazonUtils.SQS.getQueueURL(Config.workers_done_queue_name);
+        String workers_input_queue_url = AmazonUtils.SQS.getQueueURL(Config.workers_incoming_queue_name);
+        String workers_inProgress_queue_url = AmazonUtils.SQS.getQueueURL(Config.workers_inProgress_queue_name);
         String locals_output_queue_url = AmazonUtils.SQS.getQueueURL(Config.locals_output_queue_name);
 
         int nThreads = Runtime.getRuntime().availableProcessors();

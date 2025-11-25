@@ -1,12 +1,9 @@
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.s3.model.S3Exception;
-import software.amazon.awssdk.services.sqs.SqsClient;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-
-import java.util.concurrent.*;
 
 
 public class Worker {
@@ -36,8 +33,8 @@ public class Worker {
         return output;
     }
     public static void main(String[] args) throws IOException, InterruptedException {
-        String workers_output_queue_url =  AmazonUtils.SQS.getQueueURL(Config.workers_output_queue_name);
-        String workers_input_queue_url =  AmazonUtils.SQS.getQueueURL(Config.workers_input_queue_name);
+        String workers_output_queue_url =  AmazonUtils.SQS.getQueueURL(Config.workers_done_queue_name);
+        String workers_input_queue_url =  AmazonUtils.SQS.getQueueURL(Config.workers_incoming_queue_name);
 
         String first_message_in_queue =  AmazonUtils.SQS.receiveFirstMessage(workers_input_queue_url);
 
