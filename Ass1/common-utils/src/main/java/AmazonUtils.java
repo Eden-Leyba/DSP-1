@@ -2,12 +2,17 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 
 import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.ec2.Ec2Client;
 import software.amazon.awssdk.services.ec2.model.*;
 import software.amazon.awssdk.services.ec2.model.Tag;
@@ -26,8 +31,12 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.services.s3.model.*;
 import software.amazon.awssdk.core.exception.*;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.*;
+import software.amazon.awssdk.services.dynamodb.model.*;
 
 public class AmazonUtils {
 
@@ -67,6 +76,43 @@ public class AmazonUtils {
             } else {
                 putObject(bucketName, key, file);
             }
+        }
+
+        public static void appendToS3File(String bucket, String key, String text) {
+            String existing = "";
+            try {
+                existing = s3.getObjectAsBytes(GetObjectRequest.builder()
+                        .bucket(bucket)
+                        .key(key)
+                        .build()).asUtf8String();
+            } catch (Exception e) {}
+
+            String newContent = existing + text;
+
+            s3.putObject(PutObjectRequest.builder()
+                            .bucket(bucket)
+                            .key(key)
+                            .build(),
+                    RequestBody.fromString(newContent));
+        }
+
+        public static String getFileUrl(String bucket, String key) {
+
+            S3Presigner presigner = S3Presigner.builder()
+                    .region(Config.region)
+                    .build();
+
+            PresignedGetObjectRequest req = presigner.presignGetObject(
+                    GetObjectPresignRequest.builder()
+                            .signatureDuration(Duration.ofHours(1))
+                            .getObjectRequest(GetObjectRequest.builder()
+                                    .bucket(bucket)
+                                    .key(key)
+                                    .build())
+                            .build()
+            );
+
+            return req.url().toString();
         }
 
         public static String getSmallFile(String bucketName, String key)
@@ -229,7 +275,13 @@ public class AmazonUtils {
                     .queueUrl(queueUrl)
                     .build();
 
-            return sqs.receiveMessage(receiveRequest).messages().get(0).body();
+            List<Message> messages = sqs.receiveMessage(receiveRequest).messages();
+
+            if (!messages.isEmpty()) {
+                return messages.get(0).body();
+            }
+
+            return null;
         }
 
     }
@@ -267,7 +319,7 @@ public class AmazonUtils {
                 String jar_key,
                 int maxCount,
                 int minCount
-        ) throws Ec2Exception, IOException, InterruptedException {
+        ) throws Ec2Exception, IOException, InterruptedException{
             String script =
                     "#!/bin/bash\n" +
                     "mkdir /home/ec2-user/.aws \n"+
@@ -370,7 +422,7 @@ public class AmazonUtils {
             return publicIps;
         }
 
-        public static void RunJarOnRunningInstance(
+        private static void RunJarOnRunningInstance(
                 String[] publicIps,
                 String jar_bucket,
                 String jar_key
@@ -392,9 +444,8 @@ public class AmazonUtils {
 
                 ProcessBuilder ssh_command = new ProcessBuilder(
                         "ssh",
-                        "-o", "StrictHostKeyChecking=no",
-                        "-i",
-                        Config.aws_folder_path + "\\labsuser.pem",
+                        "-o", "StrictHostKeyChecking=no", //ignore the error of host is not in the hosts file
+                        "-i", Config.aws_folder_path + "\\labsuser.pem",
                         "ec2-user@ec2-" + publicIp.replaceAll("\\.","-") + ".compute-1.amazonaws.com",
                         "bash << 'EOF'\n" +
                         "sudo mv /home/ec2-user/credentials /home/ec2-user/.aws/credentials\n" +
@@ -473,5 +524,88 @@ public class AmazonUtils {
         }
 
     }
+
+    public static class DynamoDB {
+        private static String table_name;
+
+        private static final DynamoDbClient dynamo = DynamoDbClient.builder()
+                .region(Config.region)
+                .build();
+
+        public static void SetTableName(String name) {
+            table_name = name;
+        }
+
+        public static Map<String, AttributeValue> getEntry(int localId) throws IllegalArgumentException {
+            GetItemRequest request = GetItemRequest.builder()
+                    .tableName(table_name)
+                    .key(Map.of(
+                            "localId", AttributeValue.fromN(String.valueOf(localId)) // primary key
+                    ))
+                    .build();
+
+            GetItemResponse response = dynamo.getItem(request);
+
+            if (response.hasItem()) {
+                return response.item();
+            } else {
+                throw new IllegalArgumentException("DynamoDB Error: No Local with locals_id: "+ localId);
+            }
+        }
+
+        public static void createEntry(
+                int localId,
+                int numDone,
+                int numUrls,
+                String bucketName,
+                String keyName)
+        {
+            PutItemRequest request = PutItemRequest.builder()
+                    .tableName(table_name)
+                    .item(Map.of(
+                            "local_id", AttributeValue.fromN(String.valueOf(localId)),
+                            "num_done", AttributeValue.fromN(String.valueOf(numDone)),
+                            "num_urls", AttributeValue.fromN(String.valueOf(numUrls)),
+                            "output_summary_s3_bucketname", AttributeValue.fromS(bucketName),
+                            "output_summary_s3_key", AttributeValue.fromS(keyName)
+                    ))
+                    .build();
+
+            dynamo.putItem(request);
+            System.out.println("Created entry for ID: " + localId);
+        }
+
+        public static void deleteEntry(int localId) {
+            DeleteItemRequest request = DeleteItemRequest.builder()
+                    .tableName(table_name)
+                    .key(Map.of(
+                            "local_id", AttributeValue.fromN(String.valueOf(localId))
+                    ))
+                    .build();
+
+            DynamoDB.dynamo.deleteItem(request);
+            System.out.println("Deleted entry for ID: " + localId);
+        }
+
+        public static void incrementNumDone(int localId) {
+            UpdateItemRequest request = UpdateItemRequest.builder()
+                    .tableName(table_name)
+                    .key(Map.of(
+                            "local_id", AttributeValue.fromN(String.valueOf(localId))
+                    ))
+                    .updateExpression("SET num_done = num_done + :inc")
+                    .expressionAttributeValues(Map.of(
+                            ":inc", AttributeValue.fromN(String.valueOf(1))
+                    ))
+                    .conditionExpression("attribute_exists(local_id)")
+                    .build();
+
+            dynamo.updateItem(request);
+            System.out.println("Incremented num_done for " + localId);
+        }
+    }
+
+
+
 }
 

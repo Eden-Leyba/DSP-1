@@ -40,16 +40,17 @@ public class Worker {
 
         int local_id = Integer.parseInt(first_message_in_queue.split("\n")[0]);
         String requested_analysis = first_message_in_queue.split("\n")[1];
-        String url = first_message_in_queue.split("\n")[2];
+        String input_file_to_analyze_url = first_message_in_queue.split("\n")[2];
 
-        File inputFile = downloadUsingWget(url);
+        File inputFile = downloadUsingWget(input_file_to_analyze_url);
 
         long time_in_mill = System.currentTimeMillis();
-        String bucket_name = "dsp1-task2-" + time_in_mill;
+        String worker_bucket_name = "dsp1-task2-" + time_in_mill;
+        //todo: create bucket
         String inputFileName = first_message_in_queue.split("\n")[0] + "-" + time_in_mill;
-        String key = "worker-" + inputFileName;
+        String analyzed_file_key = "worker-" + inputFileName;
         try {
-            AmazonUtils.S3.uploadFile(bucket_name, key, inputFile);
+            AmazonUtils.S3.uploadFile(worker_bucket_name, analyzed_file_key, inputFile);
         } catch (IOException e) {
             System.err.println("IOException: " + e.getMessage());
         }
@@ -61,7 +62,7 @@ public class Worker {
         }
 
 
-        String message = url + "\n" + bucket_name + key + "\n" + requested_analysis;
+        String message = local_id + "\n" + input_file_to_analyze_url + "\n" + worker_bucket_name + "\n" + analyzed_file_key + "\n" + requested_analysis;
         AmazonUtils.SQS.sendMessage(workers_output_queue_url, message);
         AmazonUtils.SQS.DeleteMessage(workers_intput_queue_url)
 

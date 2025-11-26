@@ -1,7 +1,10 @@
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
+import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.Callable;
 
 public class LocalThreadTask implements Callable<Integer> {
@@ -57,6 +60,26 @@ public class LocalThreadTask implements Callable<Integer> {
 
 
         int m = (int) ((float) (num_files_to_process/n) + 0.5);
+
+        //Create an empty S3 file
+        String local_app_bucket = "local-"+local_id + "-" + System.currentTimeMillis();
+        String html_file_key = "output_file.html";
+        try {
+            Path emptyFile = Files.createTempFile("output_file", ".html");
+            Files.write(emptyFile, new byte[0]);
+            AmazonUtils.S3.uploadFile(local_app_bucket, html_file_key, emptyFile.toFile());
+        } catch (IOException e) {
+            System.err.println("IOException: " + e.getMessage());
+        }
+
+        // Create entry for local in DynamoDB table
+        AmazonUtils.DynamoDB.createEntry(
+                local_id,
+                0,
+                num_files_to_process,
+                local_app_bucket,
+                html_file_key
+        );
 
 
         /*

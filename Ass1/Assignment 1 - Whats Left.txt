@@ -31,3 +31,4 @@ Other
 - Readme
 - Security
 
+EXCEPTIONS

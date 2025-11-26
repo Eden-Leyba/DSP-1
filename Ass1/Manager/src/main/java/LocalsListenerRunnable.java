@@ -1,8 +1,11 @@
+import software.amazon.awssdk.services.ec2.model.Ec2Exception;
+import software.amazon.awssdk.services.ec2.model.InstanceType;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.*;
 
@@ -26,6 +29,9 @@ public class LocalsListenerRunnable implements Runnable {
         final SqsClient sqs = SqsClient.builder()
                 .region(Config.region)
                 .build();
+
+        //create locals table
+        AmazonUtils.DynamoDB.SetTableName("locals");
 
         while (true) {
                 ReceiveMessageRequest request = ReceiveMessageRequest.builder()
@@ -84,12 +90,22 @@ public class LocalsListenerRunnable implements Runnable {
 
             //Start workers
             int num_workers_to_start = Math.min(m,Config.MAX_WORKER_INSTANCES) - k;
-            for (int worker_num = 0; worker_num < num_workers_to_start; worker_num++) {
-                String script = "echo 'This machine is running'";
-                String amiId = "ami-0cae6d6fe6048ca2c";
-                AmazonUtils.EC2.RunEC2InstanceWithSpecificTag(amiId, Config.instances_tag_name, Config.worker_role_value, script);
+            String amiId = "ami-0cae6d6fe6048ca2c";
+            try {
+                AmazonUtils.EC2.LaunchMultipleInstances(
+                        amiId,
+                        InstanceType.T3_MICRO,
+                        Config.instances_tag_name, Config.worker_role_value,
+                        "jars-1763844625474", "Test_Instance.jar",
+                        num_workers_to_start, 1
+                );
+            } catch (Ec2Exception e) {
+                if(e.awsErrorDetails().errorCode().equals("InsufficientInstanceCapacity")) {
+                    System.err.println("Cannot run ec2 instance! Not enough EC2 Capacity!");
+                }
+            } catch (IOException | InterruptedException e) {
+                System.err.println(e.getMessage());
             }
-
         }
 
     }

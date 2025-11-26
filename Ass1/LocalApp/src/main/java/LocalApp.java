@@ -8,22 +8,14 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
+
 public class LocalApp {
 
     static String bucket_name;
-
-//    private static String getSQSQueue(String queue_name) {
-//        //todo if queue exists, return its url, otherwise return null
-//        SqsClient sqs = SqsClient.builder().region(region).build();
-//        try {
-//            GetQueueUrlRequest getQueueRequest = GetQueueUrlRequest.builder()
-//                    .queueName(queue_name)
-//                    .build();
-//            return sqs.getQueueUrl(getQueueRequest).queueUrl();
-//        } catch (QueueDoesNotExistException e) {
-//            return null;
-//        }
-//    }
 
     public static void main(String[] args) {
 //        String  inputFileName   = args[0],
@@ -33,48 +25,64 @@ public class LocalApp {
         String locals_output_queue_url;
         String locals_input_queue_url;
 
-        System.out.println(System.currentTimeMillis());
+        String sql = """
+            CREATE TABLE IF NOT EXISTS tasks (
+                local_id VARCHAR(100) PRIMARY KEY,
+                url VARCHAR(500) NOT NULL,
+                messages_done INT NOT NULL DEFAULT 0,
+                summary_url VARCHAR(500)
+            );
+            """;
+
+        try (Connection conn = DriverManager.getConnection(DB_JDBC_URL, DB_USER, DB_PASSWORD);
+             Statement stmt = conn.createStatement()) {
+
+            stmt.execute(sql);
+            System.out.println("Table 'tasks' created (or already exists).");
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
 
         //Checks if a Manager node is active on the EC2 cloud. If it is not, the application will start the
         //manager node.
-        if (AmazonUtils.EC2.getNumEC2WithTagRunning(Config.instances_tag_name, Config.manager_role_value) == 1) {
-            System.out.println("Manager is running!");
-        } else {
-            try {
-                String amiId = "ami-0cae6d6fe6048ca2c";
-//                int launched = AmazonUtils.EC2.LaunchMultipleInstances(
+//        if (AmazonUtils.EC2.getNumEC2WithTagRunning(Config.instances_tag_name, Config.manager_role_value) == 1) {
+//            System.out.println("Manager is running!");
+//        } else {
+//            try {
+//                String amiId = "ami-0cae6d6fe6048ca2c";
+////                int launched = AmazonUtils.EC2.LaunchMultipleInstances(
+////                        amiId,
+////                        InstanceType.T2_MICRO,
+////                        Config.instances_tag_name, Config.manager_role_value,
+////                        "jars-1763844625474",
+////                        "Test_Instance.jar",
+////                        2, 2
+////                );
+//
+//                int launched = AmazonUtils.EC2.LaunchSingleInstance(
 //                        amiId,
-//                        InstanceType.T2_MICRO,
+//                        InstanceType.T3_MICRO,
 //                        Config.instances_tag_name, Config.manager_role_value,
 //                        "jars-1763844625474",
-//                        "Test_Instance.jar",
-//                        2, 2
+//                        "Test_Instance.jar"
 //                );
-
-                int launched = AmazonUtils.EC2.LaunchSingleInstance(
-                        amiId,
-                        InstanceType.T2_MICRO,
-                        Config.instances_tag_name, Config.manager_role_value,
-                        "jars-1763844625474",
-                        "Test_Instance.jar"
-                );
-
-                if(launched == 0) {
-                    throw new RuntimeException("Could not create Manager Instance!");
-                }
-
-                AmazonUtils.SQS.buildQueue(Config.locals_output_queue_name);
-                AmazonUtils.SQS.buildQueue(Config.locals_input_queue_name);
-
-            } catch (Ec2Exception | IOException | InterruptedException e) {
-                System.out.println("Could not run EC2 Manager instance: " + e.getMessage());
-                AmazonUtils.EC2.CloseEc2Client();
-                System.exit(1);
-            } catch (RuntimeException e) {
-                System.err.println(e.getMessage());
-            }
-
-        }
+//
+//                if(launched == 0) {
+//                    throw new RuntimeException("Could not create Manager Instance!");
+//                }
+//
+//                AmazonUtils.SQS.buildQueue(Config.locals_output_queue_name);
+//                AmazonUtils.SQS.buildQueue(Config.locals_input_queue_name);
+//
+//            } catch (Ec2Exception | IOException | InterruptedException e) {
+//                System.out.println("Could not run EC2 Manager instance: " + e.getMessage());
+//                AmazonUtils.EC2.CloseEc2Client();
+//                System.exit(1);
+//            } catch (RuntimeException e) {
+//                System.err.println(e.getMessage());
+//            }
+//
+//        }
 /*
         locals_output_queue_url =  AmazonUtils.SQS.getQueueURL(Config.locals_output_queue_name);
         locals_input_queue_url = AmazonUtils.SQS.getQueueURL(Config.locals_input_queue_name);
