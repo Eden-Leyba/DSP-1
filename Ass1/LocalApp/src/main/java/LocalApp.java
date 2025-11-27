@@ -98,7 +98,6 @@ public class LocalApp {
         AmazonUtils.SQS.sendMessage(locals_output_queue_url ,message_body);
         System.out.println("Sent message: " + message_body);
 
-
         // Checks an SQS queue for a message indicating the process is done and the response (the
         //summary file) is available on S3.
         ReceiveMessageRequest receiveRequest = ReceiveMessageRequest.builder()
@@ -108,28 +107,36 @@ public class LocalApp {
                 .visibilityTimeout(5) // give yourself time to check
                 .build();
 
-        SqsClient sqs = SqsClient.builder().region(Config.region).build();
-        List<Message> messages = sqs.receiveMessage(receiveRequest).messages();
+        //todo: Run occasional checks to see the manager is running, and if its not, launch it. (Recurring Job)
+        boolean found_done_msg = false;
+        while(!found_done_msg) {
+            SqsClient sqs = SqsClient.builder().region(Config.region).build();
+            List<Message> messages = sqs.receiveMessage(receiveRequest).messages();
 
-        for(Message message: messages) {
-            String[] msg_info = message.body().split("\n");
-            long msg_local_id = Long.parseLong(msg_info[0]);
-            if(msg_local_id == local_id) {
-                //Delete the message from locals_input
-                AmazonUtils.SQS.DeleteMessage(locals_input_queue_url, message);
-                String  summary_bucket = msg_info[1],
-                        summary_key = msg_info[2];
-                try {
-                    String summary_file = AmazonUtils.S3.getSmallFile(summary_bucket, summary_key);
-                    FileWriter fw = new FileWriter(outputFileName);
-                    fw.write(summary_file);
-                    fw.close();
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
+            for (Message message : messages) {
+                String[] msg_info = message.body().split("\n");
+                long msg_local_id = Long.parseLong(msg_info[0]);
+                if (msg_local_id == local_id) {
+                    found_done_msg=true;
+
+                    //Delete the message from locals_input
+                    AmazonUtils.SQS.DeleteMessage(locals_input_queue_url, message);
+
+                    String summary_bucket = msg_info[1],
+                            summary_key = msg_info[2];
+                    try {
+                        String summary_file = AmazonUtils.S3.getSmallFile(summary_bucket, summary_key);
+                        FileWriter fw = new FileWriter(outputFileName);
+                        fw.write(summary_file);
+                        fw.close();
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+
+                    break;
                 }
             }
         }
-
         AmazonUtils.EC2.CloseEc2Client();
     }
 
