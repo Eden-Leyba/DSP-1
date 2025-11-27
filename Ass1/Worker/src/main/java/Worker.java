@@ -46,7 +46,7 @@ public class Worker {
 
         long time_in_mill = System.currentTimeMillis();
         String worker_bucket_name = "dsp1-task2-" + time_in_mill;
-        //todo: create bucket
+        AmazonUtils.S3.createBucket(worker_bucket_name);
         String inputFileName = first_message_in_queue.split("\n")[0] + "-" + time_in_mill;
         String analyzed_file_key = "worker-" + inputFileName;
         try {
