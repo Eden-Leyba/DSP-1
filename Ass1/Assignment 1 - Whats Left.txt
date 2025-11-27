@@ -17,8 +17,6 @@ In SubmitLocalTaskToThreadPool(): Launching the EC2 Workers should be at last pr
 
 Worker
 - Add parser
-- Queues: WorkersInput->Workers_Tasks_Incoming, WorkersOutput->Workers_Tasks_Done
-- Add SQS Queue: Workers_Tasks_InProgress
 
 Testing
 - OK

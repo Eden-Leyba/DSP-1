@@ -48,11 +48,12 @@ public class LocalsListenerRunnable implements Runnable {
 
             for (Message msg : messages) {
                 System.out.println("Received message: " + msg.body());
-                int local_id = locals_count++;
+
                 String bucket_name = msg.body().split("\n")[0];
                 String key = msg.body().split("\n")[1];
                 int n = Integer.parseInt(msg.body().split("\n")[2]);
 
+                int local_id = Integer.parseInt(bucket_name.replace("dsp1-task1-", ""));
                 SubmitLocalTaskToThreadPool(local_id, bucket_name, key, n);
 
                 AmazonUtils.SQS.DeleteMessage(locals_output_queue_url, msg);

@@ -2,8 +2,12 @@ import software.amazon.awssdk.services.ec2.model.*;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
 import software.amazon.awssdk.core.exception.*;
+import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.model.Message;
+import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 
 import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -12,84 +16,57 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 
 public class LocalApp {
-
-    static String bucket_name;
-
     public static void main(String[] args) {
-//        String  inputFileName   = args[0],
-//                outputFileName  = args[1];
-//        int     n               = Integer.parseInt(args[2]);
+        String  inputFileName   = args[0],
+                outputFileName  = args[1];
+        int     n               = Integer.parseInt(args[2]);
 
         String locals_output_queue_url;
         String locals_input_queue_url;
 
-        String sql = """
-            CREATE TABLE IF NOT EXISTS tasks (
-                local_id VARCHAR(100) PRIMARY KEY,
-                url VARCHAR(500) NOT NULL,
-                messages_done INT NOT NULL DEFAULT 0,
-                summary_url VARCHAR(500)
-            );
-            """;
-
-        try (Connection conn = DriverManager.getConnection(DB_JDBC_URL, DB_USER, DB_PASSWORD);
-             Statement stmt = conn.createStatement()) {
-
-            stmt.execute(sql);
-            System.out.println("Table 'tasks' created (or already exists).");
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
-
         //Checks if a Manager node is active on the EC2 cloud. If it is not, the application will start the
         //manager node.
-//        if (AmazonUtils.EC2.getNumEC2WithTagRunning(Config.instances_tag_name, Config.manager_role_value) == 1) {
-//            System.out.println("Manager is running!");
-//        } else {
-//            try {
-//                String amiId = "ami-0cae6d6fe6048ca2c";
-////                int launched = AmazonUtils.EC2.LaunchMultipleInstances(
-////                        amiId,
-////                        InstanceType.T2_MICRO,
-////                        Config.instances_tag_name, Config.manager_role_value,
-////                        "jars-1763844625474",
-////                        "Test_Instance.jar",
-////                        2, 2
-////                );
-//
-//                int launched = AmazonUtils.EC2.LaunchSingleInstance(
-//                        amiId,
-//                        InstanceType.T3_MICRO,
-//                        Config.instances_tag_name, Config.manager_role_value,
-//                        "jars-1763844625474",
-//                        "Test_Instance.jar"
-//                );
-//
-//                if(launched == 0) {
-//                    throw new RuntimeException("Could not create Manager Instance!");
-//                }
-//
-//                AmazonUtils.SQS.buildQueue(Config.locals_output_queue_name);
-//                AmazonUtils.SQS.buildQueue(Config.locals_input_queue_name);
-//
-//            } catch (Ec2Exception | IOException | InterruptedException e) {
-//                System.out.println("Could not run EC2 Manager instance: " + e.getMessage());
-//                AmazonUtils.EC2.CloseEc2Client();
-//                System.exit(1);
-//            } catch (RuntimeException e) {
-//                System.err.println(e.getMessage());
-//            }
-//
-//        }
-/*
+        if (AmazonUtils.EC2.getNumEC2WithTagRunning(Config.instances_tag_name, Config.manager_role_value) == 1) {
+            System.out.println("Manager is running!");
+        }
+        else
+        {
+            try {
+                String amiId = "ami-0cae6d6fe6048ca2c";
+
+                int launched = AmazonUtils.EC2.LaunchSingleInstance(
+                        amiId,
+                        InstanceType.T3_MICRO,
+                        Config.instances_tag_name, Config.manager_role_value,
+                        "jars-1763844625474",
+                        "Test_Instance.jar"
+                );
+
+                if(launched == 0) {
+                    throw new RuntimeException("Could not create Manager Instance!");
+                }
+
+                AmazonUtils.SQS.buildQueue(Config.locals_output_queue_name);
+                AmazonUtils.SQS.buildQueue(Config.locals_input_queue_name);
+            } catch (Ec2Exception | IOException | InterruptedException e) {
+                System.out.println("Could not run EC2 Manager instance: " + e.getMessage());
+                AmazonUtils.EC2.CloseEc2Client();
+                System.exit(1);
+            } catch (RuntimeException e) {
+                System.err.println(e.getMessage());
+            }
+        }
+
         locals_output_queue_url =  AmazonUtils.SQS.getQueueURL(Config.locals_output_queue_name);
         locals_input_queue_url = AmazonUtils.SQS.getQueueURL(Config.locals_input_queue_name);
 
         //Uploads the input file to S3
         //TODO: everytime we upload a file we create a new bucket, which may be an issue
-        bucket_name = "dsp1-task1-" + System.currentTimeMillis();
+        long local_id = System.currentTimeMillis();
+        String bucket_name = "dsp1-task1-" + local_id;
         //Create a bucket
         try {
             AmazonUtils.S3.createBucket(bucket_name);
@@ -120,33 +97,36 @@ public class LocalApp {
         String message_body = bucket_name + "\n" + key + "\n" + n;
         AmazonUtils.SQS.sendMessage(locals_output_queue_url ,message_body);
         System.out.println("Sent message: " + message_body);
-*/
-        /*
+
+
         // Checks an SQS queue for a message indicating the process is done and the response (the
         //summary file) is available on S3.
         ReceiveMessageRequest receiveRequest = ReceiveMessageRequest.builder()
-                .queueUrl(locals_output_queue_url)
+                .queueUrl(locals_input_queue_url)
+                .maxNumberOfMessages(1)
+                .waitTimeSeconds(20)  // long polling
+                .visibilityTimeout(5) // give yourself time to check
                 .build();
-        String received_message = AmazonUtils.SQS.receiveFirstMessage(locals_output_queue_url);
 
-        System.out.println("Received message: " + received_message);
-        String[] received_message_parts = received_message.split("\n");
-        String received_bucket_name = received_message_parts[0];
-        String received_key = received_message_parts[1];
+        SqsClient sqs = SqsClient.builder().region(Config.region).build();
+        List<Message> messages = sqs.receiveMessage(receiveRequest).messages();
 
-        //Get the file from S3
-        try {
-            AmazonUtils.S3.getSmallFile(received_bucket_name, received_key);
-        } catch (IOException e) {
-            System.err.println("IOException: " + e.getMessage());
+        for(Message message: messages) {
+            String[] msg_info = message.body().split("\n");
+            long msg_local_id = Long.parseLong(msg_info[0]);
+            if(msg_local_id == local_id) {
+                String  summary_bucket = msg_info[1],
+                        summary_key = msg_info[2];
+                try {
+                    String summary_file = AmazonUtils.S3.getSmallFile(summary_bucket, summary_key);
+                    FileWriter fw = new FileWriter(outputFileName);
+                    fw.write(summary_file);
+                    fw.close();
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }
         }
-        catch (S3Exception e) {
-            System.err.println("AWS S3 error: " + e.awsErrorDetails().errorMessage());
-        }
-        catch (SdkClientException e) {
-            System.err.println("Client-side error: " + e.getMessage());
-        }
-        */
 
         AmazonUtils.EC2.CloseEc2Client();
     }

@@ -1,7 +1,6 @@
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -12,14 +11,14 @@ public class LocalThreadTask implements Callable<Integer> {
     String bucket_name;
     String key;
     int local_id;
-    String workers_input_queue_url;
+    String workers_inoming_tasks_queue_url;
     int n;
 
-    public LocalThreadTask(String bucket_name, String key, int local_id, String workers_input_queue_url, int n) {
+    public LocalThreadTask(String bucket_name, String key, int local_id, String workers_inoming_tasks_queue_url, int n) {
         this.bucket_name = bucket_name;
         this.key = key;
         this.local_id = local_id;
-        this.workers_input_queue_url = workers_input_queue_url;
+        this.workers_inoming_tasks_queue_url = workers_inoming_tasks_queue_url;
         this.n = n;
     }
 
@@ -53,7 +52,7 @@ public class LocalThreadTask implements Callable<Integer> {
             line = line.replaceAll(" ", "\n");
             String message = local_id + "\n" + line;
 
-            AmazonUtils.SQS.sendMessage(workers_input_queue_url, message);
+            AmazonUtils.SQS.sendMessage(workers_inoming_tasks_queue_url, message);
             System.out.println("Sent message: " + message);
             num_files_to_process++;
         }
