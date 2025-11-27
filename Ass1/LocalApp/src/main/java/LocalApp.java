@@ -115,6 +115,8 @@ public class LocalApp {
             String[] msg_info = message.body().split("\n");
             long msg_local_id = Long.parseLong(msg_info[0]);
             if(msg_local_id == local_id) {
+                //Delete the message from locals_input
+                AmazonUtils.SQS.DeleteMessage(locals_input_queue_url, message);
                 String  summary_bucket = msg_info[1],
                         summary_key = msg_info[2];
                 try {
