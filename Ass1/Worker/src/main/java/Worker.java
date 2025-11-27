@@ -36,7 +36,7 @@ public class Worker {
         String workers_output_queue_url =  AmazonUtils.SQS.getQueueURL(Config.workers_done_queue_name);
         String workers_input_queue_url =  AmazonUtils.SQS.getQueueURL(Config.workers_incoming_queue_name);
 
-        String first_message_in_queue =  AmazonUtils.SQS.receiveFirstMessage(workers_input_queue_url);
+        String first_message_in_queue =  AmazonUtils.SQS.receiveFirstMessage(workers_input_queue_url).body();
 
         int local_id = Integer.parseInt(first_message_in_queue.split("\n")[0]);
         String requested_analysis = first_message_in_queue.split("\n")[1];

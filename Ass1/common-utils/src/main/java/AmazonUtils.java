@@ -270,7 +270,7 @@ public class AmazonUtils {
                     .build());
         }
 
-        public static String receiveFirstMessage(String queueUrl) {
+        public static Message receiveFirstMessage(String queueUrl) {
             ReceiveMessageRequest receiveRequest = ReceiveMessageRequest.builder()
                     .queueUrl(queueUrl)
                     .build();
@@ -278,7 +278,7 @@ public class AmazonUtils {
             List<Message> messages = sqs.receiveMessage(receiveRequest).messages();
 
             if (!messages.isEmpty()) {
-                return messages.get(0).body();
+                return messages.get(0);
             }
 
             return null;

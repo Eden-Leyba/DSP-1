@@ -26,7 +26,7 @@ public class WorkerListenerRunnable implements Runnable {
                     .maxNumberOfMessages(1)  // batch receive
                     .build();
 
-            String message = AmazonUtils.SQS.receiveFirstMessage(workers_done_tasks_queue_url);
+            String message = AmazonUtils.SQS.receiveFirstMessage(workers_done_tasks_queue_url).body();
             if(message != null) {
                 int local_id = Integer.parseInt(message.split("\n")[0]);
                 String input_file_to_analyze_url = message.split("\n")[1];
