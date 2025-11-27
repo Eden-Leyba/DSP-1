@@ -10,11 +10,11 @@ public class LocalThreadTask implements Callable<Integer> {
 
     String bucket_name;
     String key;
-    int local_id;
+    long local_id;
     String workers_inoming_tasks_queue_url;
     int n;
 
-    public LocalThreadTask(String bucket_name, String key, int local_id, String workers_inoming_tasks_queue_url, int n) {
+    public LocalThreadTask(String bucket_name, String key, long local_id, String workers_inoming_tasks_queue_url, int n) {
         this.bucket_name = bucket_name;
         this.key = key;
         this.local_id = local_id;

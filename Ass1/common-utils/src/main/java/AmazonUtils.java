@@ -536,7 +536,7 @@ public class AmazonUtils {
             table_name = name;
         }
 
-        public static Map<String, AttributeValue> getEntry(int localId) throws IllegalArgumentException {
+        public static Map<String, AttributeValue> getEntry(long localId) throws IllegalArgumentException {
             GetItemRequest request = GetItemRequest.builder()
                     .tableName(table_name)
                     .key(Map.of(
@@ -554,7 +554,7 @@ public class AmazonUtils {
         }
 
         public static void createEntry(
-                int localId,
+                long localId,
                 int numDone,
                 int numUrls,
                 String bucketName,
@@ -575,7 +575,7 @@ public class AmazonUtils {
             System.out.println("Created entry for ID: " + localId);
         }
 
-        public static void deleteEntry(int localId) {
+        public static void deleteEntry(long localId) {
             DeleteItemRequest request = DeleteItemRequest.builder()
                     .tableName(table_name)
                     .key(Map.of(
@@ -587,7 +587,7 @@ public class AmazonUtils {
             System.out.println("Deleted entry for ID: " + localId);
         }
 
-        public static void incrementNumDone(int localId) {
+        public static void incrementNumDone(long localId) {
             UpdateItemRequest request = UpdateItemRequest.builder()
                     .tableName(table_name)
                     .key(Map.of(

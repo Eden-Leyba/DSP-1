@@ -30,7 +30,7 @@ public class WorkerListenerRunnable implements Runnable {
             Message messageFromWorker = AmazonUtils.SQS.receiveFirstMessage(workers_done_tasks_queue_url);
             if(messageFromWorker != null) {
                 String[] message_split = messageFromWorker.body().split("\n");
-                int local_id = Integer.parseInt(message_split[0]);
+                long local_id = Long.parseLong(message_split[0]);
                 String input_file_to_analyze_url = message_split[1];
                 String worker_bucket_name = message_split[2];
                 String analyzed_file_key = message_split[3];

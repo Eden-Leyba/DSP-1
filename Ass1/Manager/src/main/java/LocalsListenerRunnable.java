@@ -53,7 +53,7 @@ public class LocalsListenerRunnable implements Runnable {
                 String key = msg.body().split("\n")[1];
                 int n = Integer.parseInt(msg.body().split("\n")[2]);
 
-                int local_id = Integer.parseInt(bucket_name.replace("dsp1-task1-", ""));
+                long local_id = Long.parseLong(bucket_name.replace("dsp1-task1-", ""));
                 SubmitLocalTaskToThreadPool(local_id, bucket_name, key, n);
 
                 AmazonUtils.SQS.DeleteMessage(locals_output_queue_url, msg);
@@ -61,7 +61,7 @@ public class LocalsListenerRunnable implements Runnable {
         }
     }
 
-    private void SubmitLocalTaskToThreadPool(int local_id, String bucket_name, String key, int n){
+    private void SubmitLocalTaskToThreadPool(long local_id, String bucket_name, String key, int n){
         Callable<Integer> locals_thread_task = new LocalThreadTask(
                 bucket_name,
                 key,
