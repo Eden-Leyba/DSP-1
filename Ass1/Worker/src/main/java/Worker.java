@@ -1,9 +1,9 @@
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.sqs.model.Message;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
+import java.nio.file.Files;
 
 
 public class Worker {
@@ -33,39 +33,64 @@ public class Worker {
         return output;
     }
     public static void main(String[] args) throws IOException, InterruptedException {
-        String workers_output_queue_url =  AmazonUtils.SQS.getQueueURL(Config.workers_done_queue_name);
-        String workers_input_queue_url =  AmazonUtils.SQS.getQueueURL(Config.workers_incoming_queue_name);
+        String workers_output_queue_url = AmazonUtils.SQS.getQueueURL(Config.workers_done_queue_name);
+        String workers_input_queue_url  = AmazonUtils.SQS.getQueueURL(Config.workers_incoming_queue_name);
 
-        String first_message_in_queue =  AmazonUtils.SQS.receiveFirstMessage(workers_input_queue_url).body();
+        Message first_message_in_queue_msg =
+                AmazonUtils.SQS.receiveFirstMessage(workers_input_queue_url);
+        String body = first_message_in_queue_msg.body();
 
-        int local_id = Integer.parseInt(first_message_in_queue.split("\n")[0]);
-        String requested_analysis = first_message_in_queue.split("\n")[1];
-        String input_file_to_analyze_url = first_message_in_queue.split("\n")[2];
+        long local_id = Long.parseLong(body.split("\n")[0]);
+        String requested_analysis = body.split("\n")[1];   // "POS" / "CONSTITUENCY" / "DEPENDENCY"
+        String input_file_to_analyze_url = body.split("\n")[2];
 
-        File inputFile = downloadUsingWget(input_file_to_analyze_url);
+        //  Download input file
+        File input_File_to_analyze = downloadUsingWget(input_file_to_analyze_url);
+        String textBuffer = Files.readString(input_File_to_analyze.toPath());
 
+        // Prepare output file
+        String output_File_Name = "summary_" + input_File_to_analyze.getName();
+        File output_summery_File = new File(output_File_Name);
+
+        //  Run parser
+        StanfordParser parser = new StanfordParser();
+        StanfordParser.AnalysisType analysisType =
+                StanfordParser.AnalysisType.valueOf(requested_analysis);
+
+        try (PrintWriter writer = new PrintWriter(new FileWriter(output_summery_File))) {
+            parser.parseTextBuffer(textBuffer, analysisType, writer);
+        }
+
+        //  Upload result to S3
         long time_in_mill = System.currentTimeMillis();
         String worker_bucket_name = "dsp1-task2-" + time_in_mill;
         AmazonUtils.S3.createBucket(worker_bucket_name);
-        String inputFileName = first_message_in_queue.split("\n")[0] + "-" + time_in_mill;
-        String analyzed_file_key = "worker-" + inputFileName;
+
+        String analyzed_file_key = "worker-" + output_File_Name;
+
         try {
-            AmazonUtils.S3.uploadFile(worker_bucket_name, analyzed_file_key, inputFile);
+            AmazonUtils.S3.uploadFile(worker_bucket_name, analyzed_file_key, output_summery_File);
         } catch (IOException e) {
             System.err.println("IOException: " + e.getMessage());
-        }
-        catch (S3Exception e) {
+        } catch (S3Exception e) {
             System.err.println("AWS S3 error: " + e.awsErrorDetails().errorMessage());
-        }
-        catch (SdkClientException e) {
+        } catch (SdkClientException e) {
             System.err.println("Client-side error: " + e.getMessage());
         }
 
+        //  Send message back to manager
+        String message_output_worker =
+                local_id + "\n" +
+                input_file_to_analyze_url + "\n" +
+                worker_bucket_name + "\n" +
+                analyzed_file_key + "\n" +
+                requested_analysis;
 
-        String message = local_id + "\n" + input_file_to_analyze_url + "\n" + worker_bucket_name + "\n" + analyzed_file_key + "\n" + requested_analysis;
-        AmazonUtils.SQS.sendMessage(workers_output_queue_url, message);
-        AmazonUtils.SQS.DeleteMessage(workers_intput_queue_url)
+        AmazonUtils.SQS.sendMessage(workers_output_queue_url, message_output_worker);
 
+        // Delete message from the *input* queue
+        AmazonUtils.SQS.DeleteMessage(workers_input_queue_url, first_message_in_queue_msg);
+    }
 
 
     }
