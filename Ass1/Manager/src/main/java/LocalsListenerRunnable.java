@@ -1,7 +1,6 @@
 import software.amazon.awssdk.services.ec2.model.Ec2Exception;
 import software.amazon.awssdk.services.ec2.model.InstanceType;
 import software.amazon.awssdk.services.sqs.SqsClient;
-import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 
@@ -97,7 +96,7 @@ public class LocalsListenerRunnable implements Runnable {
                         amiId,
                         InstanceType.T3_MICRO,
                         Config.instances_tag_name, Config.worker_role_value,
-                        "jars-1763844625474", "Test_Instance.jar",
+                        "jars-1763844625474", "Worker.jar",
                         num_workers_to_start, 1
                 );
             } catch (Ec2Exception e) {

@@ -5,7 +5,7 @@ import java.io.File;
 import java.io.IOException;
 
 public class TestInstance {
-    public static void main(String[] args) {
+    public static void main2(String[] args) {
         String bucket_name = "dsp1-task1-" + System.currentTimeMillis();
         //Create a bucket
         try {

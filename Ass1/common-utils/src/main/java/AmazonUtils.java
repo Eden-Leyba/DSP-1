@@ -1,7 +1,10 @@
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
 import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -64,7 +67,6 @@ public class AmazonUtils {
                                         .build())
                         .build());
             }
-
             System.out.println("Created bucket: " + bucket);
         }
 
@@ -234,7 +236,7 @@ public class AmazonUtils {
             }
         }
 
-        public static void buildQueue(String queueName) {
+        public static void buildQueue(String queueName) throws SqsException, SdkClientException{
             try {
                 CreateQueueRequest request = CreateQueueRequest.builder()
                         .queueName(queueName)
@@ -254,7 +256,7 @@ public class AmazonUtils {
             return getQueueURL(queueName);
         }
 
-        public static void sendMessage(String queueUrl, String message) {
+        public static void sendMessage(String queueUrl, String message) throws SqsException, SdkClientException{
             SendMessageRequest sendReq = SendMessageRequest.builder()
                     .queueUrl(queueUrl)
                     .messageBody(message)
@@ -263,7 +265,7 @@ public class AmazonUtils {
             System.out.println("Sent message: " + message);
         }
 
-        public static void DeleteMessage(String queueUrl, Message msg) {
+        public static void DeleteMessage(String queueUrl, Message msg) throws SqsException, SdkClientException{
             sqs.deleteMessage(DeleteMessageRequest.builder()
                     .queueUrl(queueUrl)
                     .receiptHandle(msg.receiptHandle())
@@ -278,7 +280,7 @@ public class AmazonUtils {
             List<Message> messages = sqs.receiveMessage(receiveRequest).messages();
 
             if (!messages.isEmpty()) {
-                return messages.get(0);
+                return messages.getFirst();
             }
 
             return null;
@@ -320,12 +322,16 @@ public class AmazonUtils {
                 int maxCount,
                 int minCount
         ) throws Ec2Exception, IOException, InterruptedException{
+            String bash_script = Files.readString(Path.of("startup_script.sh"));
+            bash_script = bash_script.replace("BUCKET", jar_bucket).replace("KEY", jar_key);
             String script =
                     "#!/bin/bash\n" +
                     "mkdir /home/ec2-user/.aws \n"+
+                    "echo '" + bash_script + "' >> /home/ec2-user/startup_script.sh\n" +
+                    "chmod +x startup_script.sh\n" +
                     "sudo su\n" +
                     "yum update -y\n" +
-                    "yum install -y java-23-amazon-corretto-headless awscli\n";
+                    "yum install -y java-25-amazon-corretto-headless awscli\n";
 
             RunInstancesRequest runRequest = RunInstancesRequest.builder()
                     .instanceType(instanceType)
@@ -340,9 +346,10 @@ public class AmazonUtils {
                     runRequest, tag_name, tag_value
             );
 
+            System.out.println("Reached here");
             Thread.sleep(15_000);
             RunJarOnRunningInstance(publicIps, jar_bucket, jar_key);
-
+            System.out.println("Reached here jarsssssssssss");
             return publicIps.length;
         }
 
@@ -432,30 +439,67 @@ public class AmazonUtils {
             }
             //TODO: maybe do it in threads?
             for(String publicIp : publicIps) {
-                ProcessBuilder scp_command = new ProcessBuilder(
-                        "scp",
-                        "-o", "StrictHostKeyChecking=no",
-                        "-i",
-                        Config.aws_folder_path + "\\labsuser.pem",
-                        Config.aws_folder_path + "\\credentials",
-                        "ec2-user@" + publicIp + ":/home/ec2-user/credentials"
-                );
-                scp_command.inheritIO().start().waitFor();
+                Runnable runEC2Code = () -> {
+                    try {
+                        ProcessBuilder scp_command = new ProcessBuilder(
+                                "scp",
+                                "-o", "StrictHostKeyChecking=no",
+                                "-i",
+                                Config.aws_folder_path + "\\labsuser.pem",
+                                Config.aws_folder_path + "\\credentials",
+                                "ec2-user@" + publicIp + ":/home/ec2-user/credentials"
+                        );
+                        scp_command.inheritIO().start().waitFor();
 
-                ProcessBuilder ssh_command = new ProcessBuilder(
-                        "ssh",
-                        "-o", "StrictHostKeyChecking=no", //ignore the error of host is not in the hosts file
-                        "-i", Config.aws_folder_path + "\\labsuser.pem",
-                        "ec2-user@ec2-" + publicIp.replaceAll("\\.","-") + ".compute-1.amazonaws.com",
-                        "bash << 'EOF'\n" +
-                        "sudo mv /home/ec2-user/credentials /home/ec2-user/.aws/credentials\n" +
-                        "aws s3 cp s3://"+ jar_bucket +"/"+ jar_key +" /home/ec2-user/app.jar\n" +
-                        "cd /home/ec2-user\n" +
-                        "sudo yum install -y java-23-amazon-corretto-headless \n" +
-                        "java -jar app.jar > app.log \n" +
-                        "EOF"
-                );
-                ssh_command.inheritIO().start().waitFor();
+                        String public_ip_for_ssh = publicIp.replaceAll("\\.", "-");
+                        ProcessBuilder ssh_command = new ProcessBuilder(
+                                "ssh",
+                                "-o", "StrictHostKeyChecking=no", //ignore the error of host is not in the hosts file
+                                "-i", Config.aws_folder_path + "/labsuser.pem",
+                                "ec2-user@ec2-" + public_ip_for_ssh + ".compute-1.amazonaws.com",
+                                "bash ~/startup_script.sh"   // bash will read commands from stdin
+                        );
+                        int exitCode = ssh_command.inheritIO().start().waitFor(); // just waits for SSH + script, not for the JAR
+                        System.out.println("SSH exited with code " + exitCode);
+                    }
+                    catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                };
+                Thread t = new Thread(runEC2Code);
+                t.start();
+//                ssh_command.redirectErrorStream(true);
+
+//                Process p = ssh_command.inheritIO().start();
+//                try (var writer = new java.io.OutputStreamWriter(p.getOutputStream())) {
+//                    writer.write(
+//                            "sudo mv /home/ec2-user/credentials /home/ec2-user/.aws/credentials\n" +
+//                                    "aws s3 cp s3://" + jar_bucket + "/" + jar_key + " /home/ec2-user/app.jar\n" +
+//                                    "cd /home/ec2-user\n" +
+//                                    "sudo yum install -y java-25-amazon-corretto-headless\n" +
+//                                    "nohup java -jar app.jar > app.log 2>&1 &\n" +
+//                                    "echo DONE STARTING APP\n"
+//                    );
+//                    writer.flush();
+//                }
+
+//
+//                ProcessBuilder ssh_command = new ProcessBuilder(
+//                        "ssh",
+//                        "-o", "StrictHostKeyChecking=no",
+//                        "-i", Config.aws_folder_path + "\\labsuser.pem",
+//                        "ec2-user@ec2-" + public_ip_for_ssh + ".compute-1.amazonaws.com",
+//                        "bash << 'EOF'\n" +
+//                        "sudo mv /home/ec2-user/credentials /home/ec2-user/.aws/credentials\n" +
+//                        "aws s3 cp s3://"+ jar_bucket +"/"+ jar_key +" /home/ec2-user/app.jar\n" +
+//                        "cd /home/ec2-user\n" +
+//                        "sudo yum install -y java-25-amazon-corretto-headless \n" +
+////                        "nohup java -jar app.jar > app.log 2>&1 &\n" +
+//                        "nohup sleep 600 > test.log 2>&1 &\n" +
+//                        "nohup echo \"HELLO FROM EC2\" > /home/ec2-user/app.log 2>&1 &\n" +
+//                        "EOF"
+//                );
+//                ssh_command.inheritIO().start().waitFor();
             }
         }
 

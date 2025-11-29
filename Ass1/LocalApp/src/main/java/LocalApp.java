@@ -5,17 +5,11 @@ import software.amazon.awssdk.core.exception.*;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
+import software.amazon.awssdk.services.sqs.model.SqsException;
 
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.List;
 
 public class LocalApp {
@@ -34,48 +28,58 @@ public class LocalApp {
         }
         else
         {
+            String amiId = "ami-0cae6d6fe6048ca2c";
             try {
-                String amiId = "ami-0cae6d6fe6048ca2c";
-
                 int launched = AmazonUtils.EC2.LaunchSingleInstance(
                         amiId,
                         InstanceType.T3_MICRO,
                         Config.instances_tag_name, Config.manager_role_value,
                         "jars-1763844625474",
-                        "Test_Instance.jar"
+                        "Manager.jar"
                 );
 
+                System.out.println("Launched: " + launched);
                 if(launched == 0) {
-                    throw new RuntimeException("Could not create Manager Instance!");
+                    System.err.println("Could not create Manager Instance!");
                 }
-
-                AmazonUtils.SQS.buildQueue(Config.locals_output_queue_name);
-                AmazonUtils.SQS.buildQueue(Config.locals_input_queue_name);
             } catch (Ec2Exception | IOException | InterruptedException e) {
-                System.out.println("Could not run EC2 Manager instance: " + e.getMessage());
+                System.err.println("Could not run EC2 Manager instance: " + e.getMessage());
                 AmazonUtils.EC2.CloseEc2Client();
                 System.exit(1);
             } catch (RuntimeException e) {
                 System.err.println(e.getMessage());
             }
+
+            try {
+                AmazonUtils.SQS.buildQueue(Config.locals_output_queue_name);
+                AmazonUtils.SQS.buildQueue(Config.locals_input_queue_name);
+                System.out.println("Local: Locals output/input success");
+            } catch (SqsException | SdkClientException e) {
+                System.err.println("Cannot build Locals output/input queue: " + e.getMessage());
+            }
         }
+
 
         locals_output_queue_url =  AmazonUtils.SQS.getQueueURL(Config.locals_output_queue_name);
         locals_input_queue_url = AmazonUtils.SQS.getQueueURL(Config.locals_input_queue_name);
+
+        if(locals_output_queue_url == null) {
+            System.err.println("Could not get locals_output queue url!");
+        }
+        if(locals_input_queue_url == null) {
+            System.err.println("Could not get locals_input queue url!");
+        }
 
         //Uploads the input file to S3
         //TODO: everytime we upload a file we create a new bucket, which may be an issue
         long local_id = System.currentTimeMillis();
         String bucket_name = "dsp1-task1-" + local_id;
-        //Create a bucket
+        System.out.println("bucket: " + bucket_name);
         try {
             AmazonUtils.S3.createBucket(bucket_name);
-        }
-        catch (S3Exception e) {
-            System.err.println("AWS S3 error: " + e.awsErrorDetails().errorMessage());
-        }
-        catch (SdkClientException e) {
-            System.err.println("Client-side error: " + e.getMessage());
+        } catch(S3Exception | SdkClientException e) {
+            System.err.println("Could not create bucket: " + e.getMessage());
+            System.exit(1);
         }
 
         //Upload the input file to S3
@@ -84,13 +88,13 @@ public class LocalApp {
         try {
             AmazonUtils.S3.uploadFile(bucket_name, key, inputFile);
         } catch (IOException e) {
-            System.err.println("IOException: " + e.getMessage());
+            System.err.println("Local App cannot upload file: \nIOException: " + e.getMessage());
         }
         catch (S3Exception e) {
-            System.err.println("AWS S3 error: " + e.awsErrorDetails().errorMessage());
+            System.err.println("Local App cannot upload file: \nAWS S3 error: " + e.awsErrorDetails().errorMessage());
         }
         catch (SdkClientException e) {
-            System.err.println("Client-side error: " + e.getMessage());
+            System.err.println("Local App cannot upload file: \nClient-side error: " + e.getMessage());
         }
 
         // Sends a message to an SQS queue, stating the location of the file on S3

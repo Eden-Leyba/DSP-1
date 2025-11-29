@@ -5,7 +5,7 @@ public class Manager {
     static Thread workersThread;
     static Thread localsListenerThread;
 
-    public static void main2(String[] args)
+    public static void main(String[] args)
     {
         AmazonUtils.SQS.buildQueue(Config.workers_done_queue_name);
         AmazonUtils.SQS.buildQueue(Config.workers_incoming_queue_name);
@@ -33,8 +33,6 @@ public class Manager {
 
         localsListenerThread.start();
         workersThread.start();
-
-        locals_thread_pool.shutdown();
     }
 
 }

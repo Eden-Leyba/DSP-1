@@ -61,7 +61,14 @@ public class LocalThreadTask implements Callable<Integer> {
         int m = (int) ((float) (num_files_to_process/n) + 0.5);
 
         //Create an empty S3 file
-        String local_app_bucket = "local-"+local_id + "-" + System.currentTimeMillis();
+        String local_app_bucket = "dsp1-task1-locals-outputs-"+local_id+"-"+System.currentTimeMillis();
+        try {
+            AmazonUtils.S3.createBucket(local_app_bucket);
+        } catch(S3Exception | SdkClientException e) {
+            System.err.println("Could not create bucket: " + e.getMessage());
+            System.exit(1);
+        }
+
         String html_file_key = "output_file.html";
         try {
             Path emptyFile = Files.createTempFile("output_file", ".html");
