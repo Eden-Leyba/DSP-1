@@ -6,10 +6,7 @@ import edu.stanford.nlp.parser.lexparser.LexicalizedParser;
 import edu.stanford.nlp.process.DocumentPreprocessor;
 import edu.stanford.nlp.trees.*;
 
-import java.io.File;
-import java.io.FileWriter;
-import java.io.PrintWriter;
-import java.io.StringReader;
+import java.io.*;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -40,16 +37,16 @@ public class StanfordParser {
     }
 
 
-    public void parseTextBuffer(String textContent,
+    public void parseTextBuffer(File file_to_analyze ,
                                 AnalysisType analysisType,
-                                PrintWriter writer) {
+                                PrintWriter writer) throws FileNotFoundException {
 
-        if (textContent == null || textContent.trim().isEmpty()) {
+        if (file_to_analyze == null ) {
             return;
         }
 
         DocumentPreprocessor tokenizer =
-                new DocumentPreprocessor(new StringReader(textContent));
+                new DocumentPreprocessor(new BufferedReader(new FileReader(file_to_analyze )));
 
         int sentenceId = 1;
         for (List<HasWord> sentence : tokenizer) {

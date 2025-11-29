@@ -10,16 +10,19 @@ public class TestStanfordParser {
 
     public static void main(String[] args) throws Exception {
         // 1. Sample text (like a tiny input file)
-        String sampleText = "The quick brown fox jumps over the lazy dog. "
-                + "This is a second sentence.";
+        //String sampleText = "The quick brown fox jumps over the lazy dog. "
+               // + "This is a second sentence.";
 
         // 2. Create parser (loads the models)
         StanfordParser parser = new StanfordParser();
 
+        String url_input = "https://www.gutenberg.org/cache/epub/1065/pg1065.txt"; // example: The Raven
+        File inputFile = downloadWithJava(url_input);
+
         // 3. Test each analysis type
-        testMode(parser, sampleText, StanfordParser.AnalysisType.POS);
-        testMode(parser, sampleText, StanfordParser.AnalysisType.CONSTITUENCY);
-        testMode(parser, sampleText, StanfordParser.AnalysisType.DEPENDENCY);
+        testMode(parser, inputFile, StanfordParser.AnalysisType.POS);
+        testMode(parser, inputFile, StanfordParser.AnalysisType.CONSTITUENCY);
+        testMode(parser, inputFile, StanfordParser.AnalysisType.DEPENDENCY);
     }
 
     private static File downloadWithJava(String urlString) throws Exception {
@@ -36,7 +39,7 @@ public class TestStanfordParser {
     }
 
     private static void testMode(StanfordParser parser,
-                                 String text,
+                                 File file,
                                  StanfordParser.AnalysisType type) throws Exception {
 
         String url_input = "https://www.gutenberg.org/cache/epub/1065/pg1065.txt"; // example: The Raven
@@ -53,7 +56,7 @@ public class TestStanfordParser {
 
         // 1. Run parser for this mode
         try (PrintWriter writer = new PrintWriter(new FileWriter(outFile))) {
-            parser.parseTextBuffer(textBuffer, type, writer);
+            parser.parseTextBuffer(file, type, writer);
         }
 
         // 2. Read back content and print first lines to console
