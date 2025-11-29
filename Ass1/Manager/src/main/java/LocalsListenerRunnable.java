@@ -94,10 +94,12 @@ public class LocalsListenerRunnable implements Runnable {
             try {
                 AmazonUtils.EC2.LaunchMultipleInstances(
                         amiId,
-                        InstanceType.T3_MICRO,
+                        InstanceType.T3_SMALL,
                         Config.instances_tag_name, Config.worker_role_value,
                         "jars-1763844625474", "Worker.jar",
-                        num_workers_to_start, 1
+                        num_workers_to_start, 1,
+                        false,
+                        "/home/ec2-user/.aws"
                 );
             } catch (Ec2Exception e) {
                 if(e.awsErrorDetails().errorCode().equals("InsufficientInstanceCapacity")) {

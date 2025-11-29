@@ -320,15 +320,27 @@ public class AmazonUtils {
                 String jar_bucket,
                 String jar_key,
                 int maxCount,
-                int minCount
+                int minCount,
+                boolean copy_pem,
+                String aws_folder_path
         ) throws Ec2Exception, IOException, InterruptedException{
             String bash_script = Files.readString(Path.of("startup_script.sh"));
-            bash_script = bash_script.replace("BUCKET", jar_bucket).replace("KEY", jar_key);
+
+            String copy_pem_script = "";
+
+            if(copy_pem) {
+                String pem_script = Files.readString(Path.of("pem_script.sh"));
+                copy_pem_script =
+                        "echo '" + pem_script + "' >> /home/ec2-user/pem_script.sh\n" +
+                        "chmod +x pem_script.sh\n";
+            }
+
             String script =
                     "#!/bin/bash\n" +
                     "mkdir /home/ec2-user/.aws \n"+
                     "echo '" + bash_script + "' >> /home/ec2-user/startup_script.sh\n" +
                     "chmod +x startup_script.sh\n" +
+                    copy_pem_script +
                     "sudo su\n" +
                     "yum update -y\n" +
                     "yum install -y java-25-amazon-corretto-headless awscli\n";
@@ -348,7 +360,7 @@ public class AmazonUtils {
 
             System.out.println("Reached here");
             Thread.sleep(15_000);
-            RunJarOnRunningInstance(publicIps, jar_bucket, jar_key);
+            RunJarOnRunningInstance(publicIps, jar_bucket, jar_key, copy_pem, aws_folder_path);
             System.out.println("Reached here jarsssssssssss");
             return publicIps.length;
         }
@@ -372,9 +384,11 @@ public class AmazonUtils {
                 String tag_name,
                 String tag_value,
                 String jar_bucket,
-                String jar_key
+                String jar_key,
+                boolean copy_pem,
+                String aws_folder_path
         ) throws Ec2Exception, IOException, InterruptedException {
-            return LaunchMultipleInstances(ami_id, instanceType, tag_name, tag_value, jar_bucket, jar_key, 1, 1);
+            return LaunchMultipleInstances(ami_id, instanceType, tag_name, tag_value, jar_bucket, jar_key, 1, 1, copy_pem, aws_folder_path);
         }
 
         /**
@@ -432,7 +446,9 @@ public class AmazonUtils {
         private static void RunJarOnRunningInstance(
                 String[] publicIps,
                 String jar_bucket,
-                String jar_key
+                String jar_key,
+                boolean copy_pem,
+                String aws_folder_path
         ) throws InterruptedException, IOException {
             if(publicIps.length == 0) {
                 throw new IllegalArgumentException("RunJarOnRunningInstances: No public IP address specified");
@@ -441,23 +457,46 @@ public class AmazonUtils {
             for(String publicIp : publicIps) {
                 Runnable runEC2Code = () -> {
                     try {
+                        String public_ip_for_ssh = publicIp.replaceAll("\\.", "-");
+
+                        if(copy_pem) {
+                            ProcessBuilder scp_command_to_pem = new ProcessBuilder(
+                                    "scp",
+                                    "-o", "StrictHostKeyChecking=no",
+                                    "-i",
+                                    aws_folder_path + File.separator + "labsuser.pem",
+                                    aws_folder_path + File.separator + "labsuser.pem",
+                                    "ec2-user@" + publicIp + ":/home/ec2-user/labsuser.pem"
+                            );
+                            scp_command_to_pem.inheritIO().start().waitFor();
+
+                            ProcessBuilder ssh_pem_command = new ProcessBuilder(
+                                    "ssh",
+                                    "-o", "StrictHostKeyChecking=no",
+                                    "-i", aws_folder_path + File.separator + "labsuser.pem",
+                                    "ec2-user@ec2-" + public_ip_for_ssh + ".compute-1.amazonaws.com",
+                                    "bash ~/pem_script.sh "
+                            );
+                            int exitCode = ssh_pem_command.inheritIO().start().waitFor(); // just waits for SSH + script, not for the JAR
+                            System.out.println("SSH exited with code " + exitCode);
+                        }
                         ProcessBuilder scp_command = new ProcessBuilder(
                                 "scp",
                                 "-o", "StrictHostKeyChecking=no",
                                 "-i",
-                                Config.aws_folder_path + "\\labsuser.pem",
-                                Config.aws_folder_path + "\\credentials",
+                                aws_folder_path + File.separator + "labsuser.pem",
+                                aws_folder_path + File.separator + "credentials",
                                 "ec2-user@" + publicIp + ":/home/ec2-user/credentials"
                         );
                         scp_command.inheritIO().start().waitFor();
 
-                        String public_ip_for_ssh = publicIp.replaceAll("\\.", "-");
+
                         ProcessBuilder ssh_command = new ProcessBuilder(
                                 "ssh",
                                 "-o", "StrictHostKeyChecking=no", //ignore the error of host is not in the hosts file
-                                "-i", Config.aws_folder_path + "/labsuser.pem",
+                                "-i", aws_folder_path + File.separator + "labsuser.pem",
                                 "ec2-user@ec2-" + public_ip_for_ssh + ".compute-1.amazonaws.com",
-                                "bash ~/startup_script.sh"   // bash will read commands from stdin
+                                "bash ~/startup_script.sh " + jar_bucket + " " + jar_key   // bash will read commands from stdin
                         );
                         int exitCode = ssh_command.inheritIO().start().waitFor(); // just waits for SSH + script, not for the JAR
                         System.out.println("SSH exited with code " + exitCode);
