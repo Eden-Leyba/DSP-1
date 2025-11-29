@@ -1,3 +1,5 @@
+import edu.stanford.nlp.ling.HasWord;
+import edu.stanford.nlp.process.DocumentPreprocessor;
 import software.amazon.awssdk.services.ec2.model.*;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
@@ -7,13 +9,132 @@ import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 import software.amazon.awssdk.services.sqs.model.SqsException;
 
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.util.List;
+import java.io.*;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
+import java.util.*;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 public class LocalApp {
-    public static void main(String[] args) {
+
+    private static ExecutorService parsing_thread_pool;
+    private static volatile Map<Integer, Boolean> segments;
+    private static int num_parts;
+
+    private static File downloadWithJava(String urlString) throws Exception {
+        System.out.println("Downloading from URL: " + urlString);
+
+        File tempFile = File.createTempFile("web-input-", ".txt");
+
+        try (InputStream in = new URL(urlString).openStream()) {
+            Files.copy(in, tempFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        System.out.println("Downloaded to: " + tempFile.getAbsolutePath());
+        return tempFile;
+    }
+
+    private static List<Future<File>> runParser(File input_File_to_analyze, String requested_analysis) throws IOException {
+
+        StanfordParser parser = new StanfordParser();
+        StanfordParser.AnalysisType analysisType =
+                StanfordParser.AnalysisType.valueOf(requested_analysis);
+
+        int numSentences = parser.getNumSentences(input_File_to_analyze);
+
+        //We divide the input file into parts and let 2 threads work on it simultaneously
+        int segment_length = (int) ((numSentences + num_parts - 1) / num_parts); //round up
+
+        System.out.println("Parsing " + numSentences + " sentences using " + num_parts + " segments");
+
+        segments = new LinkedHashMap<>();
+        for (int i = 0; i < num_parts; i++) {
+            segments.put(segment_length*i+1, false);
+        }
+
+        int segment_idx = 0;
+        List<Future<File>> futures = new ArrayList<>();
+
+        for (Map.Entry<Integer, Boolean> entry : segments.entrySet()) {
+
+            final int   captured_segment_idx = segment_idx,
+                    start_idx = entry.getKey(),
+                    end_idx = start_idx + segment_length - 1;
+
+            String output_File_Name = "analysis_" + captured_segment_idx + "_" + input_File_to_analyze.getName();
+            File output_analysis_file = new File(output_File_Name);
+
+            System.out.println("Created file: " + output_File_Name);
+
+            Future<File> output_file = parsing_thread_pool.submit(() -> {
+                System.out.println("Starting Task " + captured_segment_idx);
+                try (PrintWriter writer = new PrintWriter(new FileWriter(output_analysis_file))) {
+                    parser.parseTextBuffer(input_File_to_analyze, analysisType, writer, start_idx, end_idx);
+                } catch (IOException e) {
+                    System.err.println("Parser Error in ["+start_idx+","+end_idx+"]: " + e.getMessage());
+                }
+                return output_analysis_file;
+            });
+
+            futures.add(output_file);
+
+            segment_idx++;
+        }
+
+        return futures;
+    }
+
+    private static void reduceFiles(List<File> inputFiles, File outputFile) {
+        try (PrintWriter writer = new PrintWriter(new FileWriter(outputFile))) {
+
+            for (File input : inputFiles) {
+                try (BufferedReader reader = new BufferedReader(new FileReader(input))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        writer.println(line);  // write each line to output
+                    }
+                }
+            }
+
+        } catch (IOException e) {
+            throw new RuntimeException("Error merging files: " + e.getMessage(), e);
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+        long start = System.nanoTime();
+
+        int nThreads = Runtime.getRuntime().availableProcessors();
+        num_parts = nThreads;
+        parsing_thread_pool = Executors.newFixedThreadPool(nThreads);
+
+        File input_File_to_analyze = downloadWithJava("https://www.gutenberg.org/files/1660/1660-0.txt");
+
+        List<Future<File>> parser_result = runParser(input_File_to_analyze, "POS");
+        List<File> output_files = new ArrayList<>();
+        for (Future<File> f : parser_result) {
+            try {
+                output_files.add(f.get());
+            } catch (ExecutionException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        //When we reached here, all parsing tasks are finished
+        String output_File_Name = "analysis_" + input_File_to_analyze.getName();
+        File output_analysis_File = new File(output_File_Name);
+        reduceFiles(output_files, output_analysis_File);
+
+        long end = System.nanoTime();
+        long durationNs = end - start;
+        System.out.println("Parsing execution time: " + (durationNs / 1_000_000.0) + " ms");
+    }
+
+    public static void main2(String[] args) {
         String  inputFileName   = args[0],
                 outputFileName  = args[1];
         int     n               = Integer.parseInt(args[2]);
@@ -35,7 +156,9 @@ public class LocalApp {
                         InstanceType.T3_MICRO,
                         Config.instances_tag_name, Config.manager_role_value,
                         "jars-1763844625474",
-                        "Manager.jar"
+                        "Manager.jar",
+                        true,
+                        Config.aws_folder_path
                 );
 
                 System.out.println("Launched: " + launched);

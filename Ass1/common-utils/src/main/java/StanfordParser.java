@@ -36,10 +36,27 @@ public class StanfordParser {
         System.out.println("Models loaded. Ready to parse.");
     }
 
+    public int getNumSentences(File file_to_analyze) throws FileNotFoundException {
+        if (file_to_analyze == null ) {
+            return -1;
+        }
+
+        DocumentPreprocessor tokenizer =
+                new DocumentPreprocessor(new BufferedReader(new FileReader(file_to_analyze )));
+
+        int sentenceId = 1;
+        for (List<HasWord> sentence : tokenizer) {
+            sentenceId++;
+        }
+
+        return sentenceId;
+    }
 
     public void parseTextBuffer(File file_to_analyze ,
                                 AnalysisType analysisType,
-                                PrintWriter writer) throws FileNotFoundException {
+                                PrintWriter writer,
+                                int first_sentence_idx,
+                                int last_sentence_idx) throws FileNotFoundException {
 
         if (file_to_analyze == null ) {
             return;
@@ -50,7 +67,18 @@ public class StanfordParser {
 
         int sentenceId = 1;
         for (List<HasWord> sentence : tokenizer) {
-            writer.println("--- Sentence " + sentenceId++ + " ---");
+            if(sentenceId < first_sentence_idx) {
+                sentenceId++;
+                continue;
+            }
+
+            if(sentenceId > last_sentence_idx) {
+                break;
+            }
+
+            System.out.println("Sentence " + sentenceId);
+
+            writer.println("--- Sentence " + sentenceId + " ---");
 
             Tree parse = lp.apply(sentence);
 
@@ -68,6 +96,8 @@ public class StanfordParser {
 
             writer.println();
             writer.flush();
+
+            sentenceId++;
         }
     }
 

@@ -6,12 +6,21 @@ import software.amazon.awssdk.services.sqs.model.Message;
 
 import java.io.*;
 import java.nio.file.Files;
+import java.util.*;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 
 public class Worker {
 
     private static volatile boolean done = false;
     static volatile boolean terminate = false;
+
+    private static ExecutorService parsing_thread_pool;
+    private static volatile Map<Integer, Boolean> segments;
+    private static final int num_parts = 4;
 
     private static File downloadUsingWget(String url) throws IOException, InterruptedException {
 
@@ -22,11 +31,6 @@ public class Worker {
         pb.redirectErrorStream(true);
         Process process = pb.start();
 
-        try (InputStream is = process.getInputStream()) {
-            String text = new String(is.readAllBytes());
-            System.out.println("WGET OUTPUT:\n" + text);
-        }
-
         int exitCode = process.waitFor();
         if (exitCode != 0) {
             throw new IOException("wget failed with exit code " + exitCode);
@@ -35,7 +39,72 @@ public class Worker {
         return output;
     }
 
+    private static List<Future<File>> runParser(File input_File_to_analyze, String requested_analysis) throws IOException {
+
+        StanfordParser parser = new StanfordParser();
+        StanfordParser.AnalysisType analysisType =
+                StanfordParser.AnalysisType.valueOf(requested_analysis);
+
+        int numSentences = parser.getNumSentences(input_File_to_analyze);
+
+        //We divide the input file into parts and let 2 threads work on it simultaneously
+        int segment_length = (int) ((numSentences + num_parts - 1) / num_parts); //round up
+
+        segments = new LinkedHashMap<>();
+        for (int i = 0; i < num_parts; i++) {
+            segments.put(segment_length*i+1, false);
+        }
+
+        int segment_idx = 0;
+        List<Future<File>> futures = new ArrayList<>();
+
+        for (Map.Entry<Integer, Boolean> entry : segments.entrySet()) {
+
+            final int   captured_segment_idx = segment_idx,
+                        start_idx = entry.getKey(),
+                        end_idx = start_idx + num_parts - 1;
+
+            String output_File_Name = "analysis_" + captured_segment_idx + "_" + input_File_to_analyze.getName();
+            File output_analysis_file = new File(output_File_Name);
+
+            Future<File> output_file = parsing_thread_pool.submit(() -> {
+                try (PrintWriter writer = new PrintWriter(new FileWriter(output_analysis_file))) {
+                    parser.parseTextBuffer(input_File_to_analyze, analysisType, writer, start_idx, end_idx);
+                } catch (IOException e) {
+                    System.err.println("Parser Error in ["+start_idx+","+end_idx+"]: " + e.getMessage());
+                }
+                return output_analysis_file;
+            });
+
+            futures.add(output_file);
+
+            segment_idx++;
+        }
+
+        return futures;
+    }
+
+    private static void reduceFiles(List<File> inputFiles, File outputFile) {
+        try (PrintWriter writer = new PrintWriter(new FileWriter(outputFile))) {
+
+            for (File input : inputFiles) {
+                try (BufferedReader reader = new BufferedReader(new FileReader(input))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        writer.println(line);  // write each line to output
+                    }
+                }
+            }
+
+        } catch (IOException e) {
+            throw new RuntimeException("Error merging files: " + e.getMessage(), e);
+        }
+    }
+
     public static void main(String[] args) throws IOException, InterruptedException {
+
+        int nThreads = Runtime.getRuntime().availableProcessors();
+        parsing_thread_pool = Executors.newFixedThreadPool(nThreads);
 
         String workers_done_queue_url = AmazonUtils.SQS.getQueueURL(Config.workers_done_queue_name);
         String workers_incoming_queue_url = AmazonUtils.SQS.getQueueURL(Config.workers_incoming_queue_name);
@@ -48,34 +117,7 @@ public class Worker {
             String body = message_in_queue_msg.body();
 
             // Thread: extend visibility while we work
-            Thread visibilityExtender = new Thread(() -> {
-                try {
-                    while (!done) {
-
-                        try {
-                            Thread.sleep(30_000);  // every 30 seconds
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            System.err.println("Visibility extender interrupted");
-                            break;
-                        }
-
-                        AmazonUtils.SQS.sqs.changeMessageVisibility(
-                                ChangeMessageVisibilityRequest.builder()
-                                        .queueUrl(workers_incoming_queue_url)
-                                        .receiptHandle(message_in_queue_msg.receiptHandle())
-                                        .visibilityTimeout(60) // 1 minute
-                                        .build());
-                    }
-
-                    // Delete message from the *input* queue
-                    AmazonUtils.SQS.DeleteMessage(workers_incoming_queue_url, message_in_queue_msg);
-
-                } catch (Exception e) {
-                    System.err.println("Error in visibility extender: " + e.getMessage());
-                }
-            });
-            visibilityExtender.start();
+            Thread visibilityExtender = getVisibilityExtender(workers_incoming_queue_url, message_in_queue_msg);
 
             // Parse message
             String[] msg_split = body.split("\n");
@@ -87,20 +129,21 @@ public class Worker {
             File input_File_to_analyze = downloadUsingWget(input_file_to_analyze_url);
             //String textBuffer = Files.readString(input_File_to_analyze.toPath());
 
-            // Prepare output file
+            // Run parser in batches (Map-Reduce)
+            List<Future<File>> parser_result = runParser(input_File_to_analyze, requested_analysis);
+            List<File> output_files = new ArrayList<>();
+            for (Future<File> f : parser_result) {
+                try {
+                    output_files.add(f.get());
+                } catch (ExecutionException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+
+            //When we reached here, all parsing tasks are finished
             String output_File_Name = "analysis_" + input_File_to_analyze.getName();
             File output_analysis_File = new File(output_File_Name);
-
-            // Run parser
-            StanfordParser parser = new StanfordParser();
-            StanfordParser.AnalysisType analysisType =
-                    StanfordParser.AnalysisType.valueOf(requested_analysis);
-
-            try (PrintWriter writer = new PrintWriter(new FileWriter(output_analysis_File))) {
-                parser.parseTextBuffer(input_File_to_analyze, analysisType, writer);
-            } catch (IOException e) {
-                System.err.println("Parser Error: " + e.getMessage());
-            }
+            reduceFiles(output_files, output_analysis_File);
 
             // Upload result to S3
             long time_in_mill = System.currentTimeMillis();
@@ -144,5 +187,37 @@ public class Worker {
             }
 
         }
+    }
+
+    private static Thread getVisibilityExtender(String workers_incoming_queue_url, Message message_in_queue_msg) {
+        Thread visibilityExtender = new Thread(() -> {
+            try {
+                while (!done) {
+
+                    try {
+                        Thread.sleep(30_000);  // every 30 seconds
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        System.err.println("Visibility extender interrupted");
+                        break;
+                    }
+
+                    AmazonUtils.SQS.sqs.changeMessageVisibility(
+                            ChangeMessageVisibilityRequest.builder()
+                                    .queueUrl(workers_incoming_queue_url)
+                                    .receiptHandle(message_in_queue_msg.receiptHandle())
+                                    .visibilityTimeout(60) // 1 minute
+                                    .build());
+                }
+
+                // Delete message from the *input* queue
+                AmazonUtils.SQS.DeleteMessage(workers_incoming_queue_url, message_in_queue_msg);
+
+            } catch (Exception e) {
+                System.err.println("Error in visibility extender: " + e.getMessage());
+            }
+        });
+        visibilityExtender.start();
+        return visibilityExtender;
     }
 }
