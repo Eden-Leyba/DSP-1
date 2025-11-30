@@ -1,5 +1,6 @@
 # About the project
 ## Introduction
+
 This project implements a distributed text-analysis system deployed on Amazon Web Services (AWS).
 Each Local Application submits an input file containing multiple text‐file URLs together with their required analysis type (POS, Constituency, or Dependency).
 Upon submission, the file is uploaded to Amazon S3 and a processing request is sent to the cloud.
@@ -12,6 +13,7 @@ Worker instances operate independently: each retrieves tasks from the queue, dow
 The Manager aggregates all results belonging to a specific Local Application, constructs a single HTML summary file, stores it in S3, and notifies the originating Local Application via SQS.
 
 This system was designed in accordance with the distributed-systems principles and requirements specified for the assignment.
+
 It supports secure handling of AWS credentials, scalable execution under heavy workloads, persistent and fault-tolerant behavior in the presence of node failures, and correct recovery from stalled or interrupted processing through SQS visibility timeouts and message re-delivery.
 The architecture also ensures correct behavior when multiple Local Applications run concurrently, proper division of responsibilities between Manager and Workers, and careful consideration of when threading is appropriate within individual components.
 All of which will be discussed in detail in the following sections.
