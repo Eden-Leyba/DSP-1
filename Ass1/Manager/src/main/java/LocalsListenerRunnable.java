@@ -5,6 +5,9 @@ import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.concurrent.*;
 
@@ -15,11 +18,14 @@ public class LocalsListenerRunnable implements Runnable {
     int locals_count;
     ExecutorService locals_thread_pool;
 
+    boolean terminate;
+
     public LocalsListenerRunnable(String locals_output_queue_url, String workers_input_queue_url, ExecutorService locals_thread_pool) {
         this.locals_output_queue_url = locals_output_queue_url;
         this.workers_input_queue_url = workers_input_queue_url;
         this.locals_count = 0;
         this.locals_thread_pool = locals_thread_pool;
+        this.terminate = false;
     }
 
     @Override
@@ -32,7 +38,7 @@ public class LocalsListenerRunnable implements Runnable {
         //create locals table
         AmazonUtils.DynamoDB.SetTableName("locals");
 
-        while (true) {
+        while (!terminate) {
                 ReceiveMessageRequest request = ReceiveMessageRequest.builder()
                         .queueUrl(locals_output_queue_url)
                         .waitTimeSeconds(20)      // long polling (max allowed)
@@ -48,12 +54,33 @@ public class LocalsListenerRunnable implements Runnable {
             for (Message msg : messages) {
                 System.out.println("Received message: " + msg.body());
 
-                String bucket_name = msg.body().split("\n")[0];
-                String key = msg.body().split("\n")[1];
-                int n = Integer.parseInt(msg.body().split("\n")[2]);
+                if(msg.equals(Config.msg_terminate_string)) {
+                    terminate = true;
+                    //rewrite terminate.txt
+                    Path path = Paths.get("terminate.txt");
+                    try {
+                        if (!Files.exists(path)) {
+                            throw new IOException("File does not exist: " + path);
+                        }
+                        String newContent = "true";
+                        Files.write(path, newContent.getBytes());
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
 
-                long local_id = Long.parseLong(bucket_name.replace("dsp1-task1-", ""));
-                SubmitLocalTaskToThreadPool(local_id, bucket_name, key, n);
+                    //send message to workers to terminate
+                    AmazonUtils.SQS.sendMessage(workers_input_queue_url, Config.msg_terminate_string);
+
+                    break;
+                }
+                else {
+                    String bucket_name = msg.body().split("\n")[0];
+                    String key = msg.body().split("\n")[1];
+                    int n = Integer.parseInt(msg.body().split("\n")[2]);
+
+                    long local_id = Long.parseLong(bucket_name.replace("dsp1-task1-", ""));
+                    SubmitLocalTaskToThreadPool(local_id, bucket_name, key, n);
+                }
 
                 AmazonUtils.SQS.DeleteMessage(locals_output_queue_url, msg);
             }
@@ -70,7 +97,7 @@ public class LocalsListenerRunnable implements Runnable {
         );
 
         Future<Integer> future_m = locals_thread_pool.submit(locals_thread_task);
-        int k = AmazonUtils.EC2.getNumEC2WithTagRunning(Config.instances_tag_name, Config.worker_role_value);
+        int k = AmazonUtils.EC2.getIdsEC2WithTagRunning(Config.instances_tag_name, Config.worker_role_value).size();
 
         if(k < Config.MAX_WORKER_INSTANCES) {
             int m = 0;

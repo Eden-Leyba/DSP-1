@@ -286,6 +286,35 @@ public class AmazonUtils {
             return null;
         }
 
+        public static int getApproxMessagesCount(String queueUrl) {
+            GetQueueAttributesResponse resp = sqs.getQueueAttributes(
+                    GetQueueAttributesRequest.builder()
+                            .queueUrl(queueUrl)
+                            .attributeNames(
+                                    QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES,
+                                    QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_NOT_VISIBLE
+                            )
+                            .build()
+            );
+
+            String count = resp.attributes().get(QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES);
+            return Integer.parseInt(count);
+        }
+
+        public static void deleteAllMessages(String queueUrl) {
+            try {
+                PurgeQueueRequest request = PurgeQueueRequest.builder()
+                        .queueUrl(queueUrl)
+                        .build();
+
+                sqs.purgeQueue(request);
+                System.out.println("Purge requested for queue: " + queueUrl);
+            } catch (SqsException e) {
+                System.err.println(e.awsErrorDetails().errorMessage());
+                throw e;
+            }
+        }
+
     }
 
     public static class EC2 {
@@ -587,7 +616,7 @@ public class AmazonUtils {
         }
 
         // Return the number of EC2 instances which are running with the provided tag
-        public static int getNumEC2WithTagRunning(String tag_name, String tag_value) {
+        public static List<String> getIdsEC2WithTagRunning(String tag_name, String tag_value) {
             DescribeInstancesRequest req = DescribeInstancesRequest.builder()
                     .filters(
                             Filter.builder().name("tag:"+tag_name).values(tag_value).build(),
@@ -596,14 +625,24 @@ public class AmazonUtils {
                     .build();
             DescribeInstancesResponse response = ec2.describeInstances(req);
 
-            int result = 0;
+            List<String> result = new ArrayList<>();
             for (Reservation reservation : response.reservations()) {
                 for (Instance instance : reservation.instances()) {
-                    result++;
+                    result.add(instance.instanceId());
                 }
             }
 
             return result;
+        }
+
+        public static void terminateInstance(String instanceId) {
+            TerminateInstancesRequest req = TerminateInstancesRequest.builder()
+                    .instanceIds(instanceId)
+                    .build();
+
+            ec2.terminateInstances(req);
+
+            System.out.println("Terminate signal sent to instance: " + instanceId);
         }
 
     }

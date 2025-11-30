@@ -1,11 +1,9 @@
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.sqs.model.ChangeMessageVisibilityRequest;
-import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
 
 import java.io.*;
-import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -15,7 +13,7 @@ import java.util.concurrent.Future;
 
 public class Worker {
 
-    private static volatile boolean done = false;
+    private static volatile boolean msg_visible_to_other_workers = false;
     static volatile boolean terminate = false;
 
     private static ExecutorService parsing_thread_pool;
@@ -70,7 +68,7 @@ public class Worker {
             Future<File> output_file = parsing_thread_pool.submit(() -> {
                 StanfordParser localParser = new StanfordParser(); // each thread its own
                 try (PrintWriter writer = new PrintWriter(new FileWriter(output_analysis_file))) {
-                    localParser.parseTextBuffer(input_File_to_analyze, analysisType, writer, start_idx, end_idx);
+                    localParser.parseTextBuffer(input_File_to_analyze, analysisType, writer);
                 } catch (IOException e) {
                     System.err.println("Parser Error in ["+start_idx+","+end_idx+"]: " + e.getMessage());
                 }
@@ -102,19 +100,18 @@ public class Worker {
         }
     }
 
-    public static void main(String[] args) throws IOException, InterruptedException {
+    public static void mainWithThreads(String[] args) throws IOException, InterruptedException {
 
         long start = System.nanoTime();
-        //int nThreads = Runtime.getRuntime().availableProcessors();
+
         int nThreads = 2;  // start small and see if it runs
         parsing_thread_pool = Executors.newFixedThreadPool(nThreads);
 
         // Download input file
-        File input_File_to_analyze = downloadUsingWget("https://www.gutenberg.org/files/1660/1660-0.txt");
-        //String textBuffer = Files.readString(input_File_to_analyze.toPath());
+        File input_file_to_analyze = downloadUsingWget("https://www.gutenberg.org/files/1660/1660-0.txt");
 
-        // Run parser in batches (Map-Reduce)
-        List<Future<File>> parser_result = runParser(input_File_to_analyze, "POS");
+        //run parser in batches
+        List<Future<File>> parser_result = runParser(input_file_to_analyze, "POS");
         List<File> output_files = new ArrayList<>();
         for (Future<File> f : parser_result) {
             try {
@@ -125,8 +122,8 @@ public class Worker {
         }
 
         //When we reached here, all parsing tasks are finished
-        String outputFileName = "analysis" + input_File_to_analyze.getName();
-        File output_analysis_File = new File(outputFileName);
+        String output_File_Name = "analysis_" + input_file_to_analyze.getName();
+        File output_analysis_File = new File(output_File_Name);
         reduceFiles(output_files, output_analysis_File);
 
         long end = System.nanoTime();
@@ -135,49 +132,47 @@ public class Worker {
 
     }
 
-    public static void main2(String[] args) throws IOException, InterruptedException {
-
-        int nThreads = Runtime.getRuntime().availableProcessors();
+    public static void main(String[] args) throws IOException, InterruptedException {
         parsing_thread_pool = Executors.newFixedThreadPool(2);
 
         String workers_done_queue_url = AmazonUtils.SQS.getQueueURL(Config.workers_done_queue_name);
         String workers_incoming_queue_url = AmazonUtils.SQS.getQueueURL(Config.workers_incoming_queue_name);
 
         while (!terminate) {
-            done = false;   // reset for this task
+            msg_visible_to_other_workers = false;
 
             Message message_in_queue_msg =
                     AmazonUtils.SQS.receiveFirstMessage(workers_incoming_queue_url);
-            String body = message_in_queue_msg.body();
+            String msg_body = message_in_queue_msg.body();
 
             // Thread: extend visibility while we work
             Thread visibilityExtender = getVisibilityExtender(workers_incoming_queue_url, message_in_queue_msg);
 
-            // Parse message
-            String[] msg_split = body.split("\n");
+            if(msg_body.equals(Config.msg_terminate_string)) {
+                break;
+            }
+
+            // In case of job msg, parse message
+            String[] msg_split = msg_body.split("\n");
             long local_id = Long.parseLong(msg_split[0]);
             String requested_analysis = msg_split[1];   // "POS" / "CONSTITUENCY" / "DEPENDENCY"
             String input_file_to_analyze_url = msg_split[2];
 
             // Download input file
-            File input_File_to_analyze = downloadUsingWget(input_file_to_analyze_url);
-            //String textBuffer = Files.readString(input_File_to_analyze.toPath());
+            File input_file_to_analyze = downloadUsingWget(input_file_to_analyze_url);
 
-            // Run parser in batches (Map-Reduce)
-            List<Future<File>> parser_result = runParser(input_File_to_analyze, requested_analysis);
-            List<File> output_files = new ArrayList<>();
-            for (Future<File> f : parser_result) {
-                try {
-                    output_files.add(f.get());
-                } catch (ExecutionException e) {
-                    throw new RuntimeException(e);
-                }
+            String output_file_name = "analysis_" + input_file_to_analyze.getName();
+            File output_analysis_file = new File(output_file_name);
+
+            StanfordParser parser = new StanfordParser();
+            StanfordParser.AnalysisType analysisType =
+                    StanfordParser.AnalysisType.valueOf(requested_analysis);
+
+            try (PrintWriter writer = new PrintWriter(new FileWriter(output_analysis_file))) {
+                parser.parseTextBuffer(input_file_to_analyze, analysisType, writer);
+            } catch (IOException e) {
+                System.err.println("Parser Error: " + e.getMessage());
             }
-
-            //When we reached here, all parsing tasks are finished
-            String output_File_Name = "analysis_" + input_File_to_analyze.getName();
-            File output_analysis_File = new File(output_File_Name);
-            reduceFiles(output_files, output_analysis_File);
 
             // Upload result to S3
             long time_in_mill = System.currentTimeMillis();
@@ -188,16 +183,16 @@ public class Worker {
                 System.err.println("Worker Can't create bucket with name: " + worker_bucket_name + ", err msg: " + e.getMessage());
             }
 
-            String analyzed_file_key = "worker-" + output_File_Name;
+            String analyzed_file_key = "worker-" + output_file_name;
 
             try {
-                AmazonUtils.S3.uploadFile(worker_bucket_name, analyzed_file_key, output_analysis_File);
+                AmazonUtils.S3.uploadFile(worker_bucket_name, analyzed_file_key, output_analysis_file);
             } catch (IOException e) {
-                System.err.println("Worker Can't upload file: " + output_File_Name + ", IOException: " + e.getMessage());
+                System.err.println("Worker Can't upload file: " + output_file_name + ", IOException: " + e.getMessage());
             } catch (S3Exception e) {
-                System.err.println("Worker Can't upload file: " + output_File_Name + ", AWS S3 error: " + e.awsErrorDetails().errorMessage());
+                System.err.println("Worker Can't upload file: " + output_file_name + ", AWS S3 error: " + e.awsErrorDetails().errorMessage());
             } catch (SdkClientException e) {
-                System.err.println("Worker Can't upload file: " + output_File_Name + ", Client-side error: " + e.getMessage());
+                System.err.println("Worker Can't upload file: " + output_file_name + ", Client-side error: " + e.getMessage());
             }
 
             // Send message back to manager
@@ -211,7 +206,7 @@ public class Worker {
             AmazonUtils.SQS.sendMessage(workers_done_queue_url, message_output_worker);
 
             // Mark done so the visibility thread stops
-            done = true;
+            msg_visible_to_other_workers = true;
 
             // Optionally wait for visibility thread to finish (not strictly needed)
             try {
@@ -226,7 +221,7 @@ public class Worker {
     private static Thread getVisibilityExtender(String workers_incoming_queue_url, Message message_in_queue_msg) {
         Thread visibilityExtender = new Thread(() -> {
             try {
-                while (!done) {
+                while (!msg_visible_to_other_workers) {
 
                     try {
                         Thread.sleep(30_000);  // every 30 seconds
@@ -245,7 +240,8 @@ public class Worker {
                 }
 
                 // Delete message from the *input* queue
-                AmazonUtils.SQS.DeleteMessage(workers_incoming_queue_url, message_in_queue_msg);
+                if(!message_in_queue_msg.body().equals(Config.msg_terminate_string)) {}
+                    AmazonUtils.SQS.DeleteMessage(workers_incoming_queue_url, message_in_queue_msg);
 
             } catch (Exception e) {
                 System.err.println("Error in visibility extender: " + e.getMessage());

@@ -17,4 +17,7 @@ public class Config {
     final static int MAX_WORKER_INSTANCES = 18;
 
     final static String JAR_BUCKET = "jars-1763844625474";
+
+    final static String args_terminate_string = "terminate";
+    final static String msg_terminate_string = "terminate";
 }

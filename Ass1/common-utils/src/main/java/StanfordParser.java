@@ -54,9 +54,7 @@ public class StanfordParser {
 
     public void parseTextBuffer(File file_to_analyze ,
                                 AnalysisType analysisType,
-                                PrintWriter writer,
-                                int first_sentence_idx,
-                                int last_sentence_idx) throws FileNotFoundException {
+                                PrintWriter writer) throws FileNotFoundException {
 
         if (file_to_analyze == null ) {
             return;
@@ -67,14 +65,14 @@ public class StanfordParser {
 
         int sentenceId = 1;
         for (List<HasWord> sentence : tokenizer) {
-            if(sentenceId < first_sentence_idx) {
-                sentenceId++;
-                continue;
-            }
-
-            if(sentenceId > last_sentence_idx) {
-                break;
-            }
+//            if(sentenceId < first_sentence_idx) {
+//                sentenceId++;
+//                continue;
+//            }
+//
+//            if(sentenceId > last_sentence_idx) {
+//                break;
+//            }
 
             System.out.println("Sentence " + sentenceId);
 

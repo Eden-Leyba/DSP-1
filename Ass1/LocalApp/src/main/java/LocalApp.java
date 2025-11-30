@@ -5,6 +5,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
 import software.amazon.awssdk.core.exception.*;
 import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.model.ChangeMessageVisibilityRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 import software.amazon.awssdk.services.sqs.model.SqsException;
@@ -21,131 +22,17 @@ import java.util.concurrent.Future;
 
 public class LocalApp {
 
-    private static ExecutorService parsing_thread_pool;
-    private static volatile Map<Integer, Boolean> segments;
-    private static int num_parts;
+    private static long local_id;
 
-    private static File downloadWithJava(String urlString) throws Exception {
-        System.out.println("Downloading from URL: " + urlString);
+    private static String locals_output_queue_url;
+    private static String locals_input_queue_url;
 
-        File tempFile = File.createTempFile("web-input-", ".txt");
+    private static Thread managerChecker;
 
-        try (InputStream in = new URL(urlString).openStream()) {
-            Files.copy(in, tempFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-        }
-
-        System.out.println("Downloaded to: " + tempFile.getAbsolutePath());
-        return tempFile;
-    }
-
-    private static List<Future<File>> runParser(File input_File_to_analyze, String requested_analysis) throws IOException {
-
-        StanfordParser parser = new StanfordParser();
-        StanfordParser.AnalysisType analysisType =
-                StanfordParser.AnalysisType.valueOf(requested_analysis);
-
-        int numSentences = parser.getNumSentences(input_File_to_analyze);
-
-        //We divide the input file into parts and let 2 threads work on it simultaneously
-        int segment_length = (int) ((numSentences + num_parts - 1) / num_parts); //round up
-
-        System.out.println("Parsing " + numSentences + " sentences using " + num_parts + " segments");
-
-        segments = new LinkedHashMap<>();
-        for (int i = 0; i < num_parts; i++) {
-            segments.put(segment_length*i+1, false);
-        }
-
-        int segment_idx = 0;
-        List<Future<File>> futures = new ArrayList<>();
-
-        for (Map.Entry<Integer, Boolean> entry : segments.entrySet()) {
-
-            final int   captured_segment_idx = segment_idx,
-                    start_idx = entry.getKey(),
-                    end_idx = start_idx + segment_length - 1;
-
-            String output_File_Name = "analysis_" + captured_segment_idx + "_" + input_File_to_analyze.getName();
-            File output_analysis_file = new File(output_File_Name);
-
-            System.out.println("Created file: " + output_File_Name);
-
-            Future<File> output_file = parsing_thread_pool.submit(() -> {
-                System.out.println("Starting Task " + captured_segment_idx);
-                try (PrintWriter writer = new PrintWriter(new FileWriter(output_analysis_file))) {
-                    parser.parseTextBuffer(input_File_to_analyze, analysisType, writer, start_idx, end_idx);
-                } catch (IOException e) {
-                    System.err.println("Parser Error in ["+start_idx+","+end_idx+"]: " + e.getMessage());
-                }
-                return output_analysis_file;
-            });
-
-            futures.add(output_file);
-
-            segment_idx++;
-        }
-
-        return futures;
-    }
-
-    private static void reduceFiles(List<File> inputFiles, File outputFile) {
-        try (PrintWriter writer = new PrintWriter(new FileWriter(outputFile))) {
-
-            for (File input : inputFiles) {
-                try (BufferedReader reader = new BufferedReader(new FileReader(input))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        writer.println(line);  // write each line to output
-                    }
-                }
-            }
-
-        } catch (IOException e) {
-            throw new RuntimeException("Error merging files: " + e.getMessage(), e);
-        }
-    }
-
-    public static void main(String[] args) throws Exception {
-        long start = System.nanoTime();
-
-        int nThreads = Runtime.getRuntime().availableProcessors();
-        num_parts = nThreads;
-        parsing_thread_pool = Executors.newFixedThreadPool(nThreads);
-
-        File input_File_to_analyze = downloadWithJava("https://www.gutenberg.org/files/1660/1660-0.txt");
-
-        List<Future<File>> parser_result = runParser(input_File_to_analyze, "POS");
-        List<File> output_files = new ArrayList<>();
-        for (Future<File> f : parser_result) {
-            try {
-                output_files.add(f.get());
-            } catch (ExecutionException e) {
-                throw new RuntimeException(e);
-            }
-        }
-        //jars-1763844625474
-
-        //When we reached here, all parsing tasks are finished
-        String output_File_Name = "analysis_" + input_File_to_analyze.getName();
-        File output_analysis_File = new File(output_File_Name);
-        reduceFiles(output_files, output_analysis_File);
-
-        long end = System.nanoTime();
-        long durationNs = end - start;
-        System.out.println("Parsing execution time: " + (durationNs / 1_000_000.0) + " ms");
-    }
-
-    public static void main2(String[] args) {
-        String  inputFileName   = args[0],
-                outputFileName  = args[1];
-        int     n               = Integer.parseInt(args[2]);
-
-        String locals_output_queue_url;
-        String locals_input_queue_url;
-
+    private static void checkIfManagerRunning(boolean createQueues) {
         //Checks if a Manager node is active on the EC2 cloud. If it is not, the application will start the
         //manager node.
-        if (AmazonUtils.EC2.getNumEC2WithTagRunning(Config.instances_tag_name, Config.manager_role_value) == 1) {
+        if (AmazonUtils.EC2.getIdsEC2WithTagRunning(Config.instances_tag_name, Config.manager_role_value).size() == 1) {
             System.out.println("Manager is running!");
         }
         else
@@ -174,15 +61,88 @@ public class LocalApp {
                 System.err.println(e.getMessage());
             }
 
-            try {
-                AmazonUtils.SQS.buildQueue(Config.locals_output_queue_name);
-                AmazonUtils.SQS.buildQueue(Config.locals_input_queue_name);
-                System.out.println("Local: Locals output/input success");
-            } catch (SqsException | SdkClientException e) {
-                System.err.println("Cannot build Locals output/input queue: " + e.getMessage());
+            if(createQueues) {
+                try {
+                    AmazonUtils.SQS.buildQueue(Config.locals_output_queue_name);
+                    AmazonUtils.SQS.buildQueue(Config.locals_input_queue_name);
+                } catch (SqsException | SdkClientException e) {
+                    System.err.println("Cannot build Locals output/input queue: " + e.getMessage());
+                }
+            }
+        }
+    }
+
+    private static void uploadInputFile(String inputFileName, String bucket_name, String key) {
+
+        System.out.println("bucket: " + bucket_name);
+        try {
+            AmazonUtils.S3.createBucket(bucket_name);
+        } catch(S3Exception | SdkClientException e) {
+            System.err.println("Could not create bucket: " + e.getMessage());
+            System.exit(1);
+        }
+
+        File inputFile = new File(inputFileName);
+
+        try {
+            AmazonUtils.S3.uploadFile(bucket_name, key, inputFile);
+        } catch (IOException e) {
+            System.err.println("Local App cannot upload file: \nIOException: " + e.getMessage());
+        }
+        catch (S3Exception e) {
+            System.err.println("Local App cannot upload file: \nAWS S3 error: " + e.awsErrorDetails().errorMessage());
+        }
+        catch (SdkClientException e) {
+            System.err.println("Local App cannot upload file: \nClient-side error: " + e.getMessage());
+        }
+    }
+
+    private static void terminate() {
+        String message = Config.msg_terminate_string;
+        AmazonUtils.SQS.sendMessage(locals_output_queue_url ,message);
+
+        //terminate manager(s)
+        List<String> running_manager_ids = AmazonUtils.EC2.getIdsEC2WithTagRunning(Config.instances_tag_name, Config.worker_role_value);
+        if(running_manager_ids.size() > 1) {
+            System.err.println("Important Error! Seems like we have 2 or more managers fighting for control!");
+        }
+        for(String id : running_manager_ids) {
+            AmazonUtils.EC2.terminateInstance(id);
+        }
+    }
+
+    public static void main(String[] args) {
+        if(args.length < 3) {
+            System.err.println("Usage: <input_File_to_analyze> <output_analysis_file> <n> <optional terminate>");
+            System.exit(1);
+        }
+
+        String  inputFileName   = args[0],
+                outputFileName  = args[1];
+        int     n               = Integer.parseInt(args[2]);
+
+        String terminate = "";
+        boolean do_terminate = false;
+        if(args.length > 3) {
+            terminate = args[3];
+            if(terminate.equals(Config.args_terminate_string)) {
+                do_terminate = true;
+            }
+            else {
+                System.err.println("Terminate argument should be 'terminate' if you want to send a terminate message, or empty if not");
+                System.exit(1);
             }
         }
 
+        checkIfManagerRunning(true);
+        managerChecker = new Thread(() -> {
+            try {
+                Thread.sleep(60_000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            checkIfManagerRunning(false);
+        });
 
         locals_output_queue_url =  AmazonUtils.SQS.getQueueURL(Config.locals_output_queue_name);
         locals_input_queue_url = AmazonUtils.SQS.getQueueURL(Config.locals_input_queue_name);
@@ -195,31 +155,10 @@ public class LocalApp {
         }
 
         //Uploads the input file to S3
-        //TODO: everytime we upload a file we create a new bucket, which may be an issue
-        long local_id = System.currentTimeMillis();
+        local_id = System.currentTimeMillis();
         String bucket_name = "dsp1-task1-" + local_id;
-        System.out.println("bucket: " + bucket_name);
-        try {
-            AmazonUtils.S3.createBucket(bucket_name);
-        } catch(S3Exception | SdkClientException e) {
-            System.err.println("Could not create bucket: " + e.getMessage());
-            System.exit(1);
-        }
-
-        //Upload the input file to S3
-        File inputFile = new File(inputFileName);
         String key = "local-app-" + inputFileName;
-        try {
-            AmazonUtils.S3.uploadFile(bucket_name, key, inputFile);
-        } catch (IOException e) {
-            System.err.println("Local App cannot upload file: \nIOException: " + e.getMessage());
-        }
-        catch (S3Exception e) {
-            System.err.println("Local App cannot upload file: \nAWS S3 error: " + e.awsErrorDetails().errorMessage());
-        }
-        catch (SdkClientException e) {
-            System.err.println("Local App cannot upload file: \nClient-side error: " + e.getMessage());
-        }
+        uploadInputFile(inputFileName, bucket_name, key);
 
         // Sends a message to an SQS queue, stating the location of the file on S3
         String message_body = bucket_name + "\n" + key + "\n" + n;
@@ -264,9 +203,17 @@ public class LocalApp {
                     break;
                 }
             }
+
+            managerChecker.start();
         }
+
+        //Here the output file is ready
+        if(do_terminate)
+            terminate();
+
         AmazonUtils.EC2.CloseEc2Client();
     }
+
 
     public static void DeleteAllS3Buckets() {
         //Delete all s3 buckets

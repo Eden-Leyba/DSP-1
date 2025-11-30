@@ -46,8 +46,11 @@ Locals (Many) -> Manager (One)
 Send a message once a local app is up and has an input file to process.   
 The input file is uploaded to S3 in a bucket denoted *bucket* and key denoted *key*  
 In addition, *n* is the number workers’ files ratio (max files per worker)  
-Message format:  
-bucket + "\n" + key + "\n" + n
+Message format:   
+If it's a job message:
+"job" + "\n" + bucket + "\n" + key + "\n" + n  
+If it's a termination message: 
+terminate
 
 ### Workers Tasks Incoming
 Manager (One) -> Workers (Many)  
@@ -62,7 +65,7 @@ Workers (Many) -> Manager (one)
 When a worker finishes a file, it sends a done message to the manager
 The message contains the S3 location of the analysis file the type of
 analysis, and the URL of the input file  
-Message Format:  
+Message Format:
 local_id + "\n" + input_file_to_analyze_url + "\n" + worker_bucket_name + "\n" + analyzed_file_key + "\n" + requested_analysis
 
 ### Locals Input

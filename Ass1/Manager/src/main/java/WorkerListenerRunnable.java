@@ -3,15 +3,20 @@ import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.Map;
 
 public class WorkerListenerRunnable implements Runnable {
     String workers_done_tasks_queue_url;
+    String workers_incoming_tasks_queue_url;
     String locals_input_queue_url;
 
-    public WorkerListenerRunnable(String workers_done_tasks_queue_url, String locals_input_queue_url) {
+    public WorkerListenerRunnable(String workers_done_tasks_queue_url, String locals_input_queue_url, String workers_incoming_tasks_queue_url) {
         this.workers_done_tasks_queue_url = workers_done_tasks_queue_url;
         this.locals_input_queue_url = locals_input_queue_url;
+        this.workers_incoming_tasks_queue_url = workers_incoming_tasks_queue_url;
     }
 
     @Override
@@ -58,6 +63,21 @@ public class WorkerListenerRunnable implements Runnable {
                     AmazonUtils.DynamoDB.deleteEntry(local_id);
 
                 }
+            }
+
+            //check if we need to terminate
+            int count_workers_incoming_msg = AmazonUtils.SQS.getApproxMessagesCount(workers_incoming_tasks_queue_url);
+            int count_workers_done_msg = AmazonUtils.SQS.getApproxMessagesCount(workers_done_tasks_queue_url);
+
+            String content = "";
+            try {
+                 content = new String(Files.readAllBytes(Paths.get("terminate.txt")));
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+
+            if(count_workers_incoming_msg == 0 && count_workers_done_msg == 0 && content.equals(Config.msg_terminate_string)) {
+                break;
             }
         }
     }
