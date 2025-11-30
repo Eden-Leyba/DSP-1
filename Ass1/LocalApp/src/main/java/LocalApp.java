@@ -108,7 +108,8 @@ public class LocalApp {
     public static void main(String[] args) throws Exception {
         long start = System.nanoTime();
 
-        int nThreads = Runtime.getRuntime().availableProcessors();
+        //int nThreads = Runtime.getRuntime().availableProcessors();
+        int nThreads = 2;  // start small and see if it runs
         num_parts = nThreads;
         parsing_thread_pool = Executors.newFixedThreadPool(nThreads);
 

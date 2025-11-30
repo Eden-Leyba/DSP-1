@@ -16,7 +16,28 @@ It supports secure handling of AWS credentials, scalable execution under heavy w
 The architecture also ensures correct behavior when multiple Local Applications run concurrently, proper division of responsibilities between Manager and Workers, and careful consideration of when threading is appropriate within individual components.
 All of which will be discussed in detail in the following sections.
 
-#
+# How to run 
+here are afew steps for how to run the system:
+1. stary yhe AWS lab
+2. Change the aws_folder_path in the config file to a path resembling  - "C:\\Users\\(username)\\.aws"
+3. go to the AWSdetals and retrive the new credentials of the running lab. save these credentials in a file named credentials in the absolute path "C:\\Users\\(username)\\.aws" on your computer.
+4. make sure to have the labsuser.pem file, created when creating the coresponding keys, to be in the same folder as the credentials.
+5. create a new bucket for the jar files (the maneger and worker) and make sure to change the name JAR_BUCKET in the config file acordingly.
+Put the two jars in the created bucket.
+6. run the file localApp on your local computer 
+
+# Classes 
+
+### localApp
+this is the local Application which
+
+### Worker 
+The worker checks consistently the workers_incoming_queue for a new massege.
+After recieving one it takes the url in the massage and the analysis requested and sends it to the parser with the relevnt info.
+After the parser is done with its job, the worker takes the file with the analyzed information and uploads it to the 
+assigned bucket for future use by the manager. 
+The worker sends a message in the workers_done_queue including the local that requested the url and the path to the analyzed info.
+
 
 # SQS Queue Protocols
 

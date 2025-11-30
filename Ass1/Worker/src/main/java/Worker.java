@@ -101,9 +101,10 @@ public class Worker {
         }
     }
 
-    public static void main(String[] args) throws IOException, InterruptedException {
+    public static void main2(String[] args) throws IOException, InterruptedException {
 
-        int nThreads = Runtime.getRuntime().availableProcessors();
+        //int nThreads = Runtime.getRuntime().availableProcessors();
+        int nThreads = 2;  // start small and see if it runs
         parsing_thread_pool = Executors.newFixedThreadPool(nThreads);
 
         String workers_done_queue_url = AmazonUtils.SQS.getQueueURL(Config.workers_done_queue_name);
@@ -220,4 +221,40 @@ public class Worker {
         visibilityExtender.start();
         return visibilityExtender;
     }
+
+    public static void main(String[] args) throws IOException, InterruptedException {
+
+        long start = System.nanoTime();
+        //int nThreads = Runtime.getRuntime().availableProcessors();
+        int nThreads = 2;  // start small and see if it runs
+        parsing_thread_pool = Executors.newFixedThreadPool(nThreads);
+
+
+        // Download input file
+        File input_File_to_analyze = downloadUsingWget("https://www.gutenberg.org/files/1660/1660-0.txt");
+        //String textBuffer = Files.readString(input_File_to_analyze.toPath());
+
+        // Run parser in batches (Map-Reduce)
+        List<Future<File>> parser_result = runParser(input_File_to_analyze, "POS");
+        List<File> output_files = new ArrayList<>();
+        for (Future<File> f : parser_result) {
+            try {
+                output_files.add(f.get());
+            } catch (ExecutionException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        //When we reached here, all parsing tasks are finished
+        String output_File_Name = "analysis_" + input_File_to_analyze.getName();
+        File output_analysis_File = new File(output_File_Name);
+        reduceFiles(output_files, output_analysis_File);
+
+        long end = System.nanoTime();
+        long durationNs = end - start;
+        System.out.println("Parsing execution time: " + (durationNs / 1_000_000.0) + " ms");
+
+    }
 }
+
+

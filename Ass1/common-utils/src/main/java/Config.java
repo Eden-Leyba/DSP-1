@@ -12,7 +12,9 @@ public class Config {
     final static String worker_role_value = "worker";
     final static String instances_tag_name = "Role";
 
-    final static String aws_folder_path = "C:\\Users\\edenl\\.aws";
+    final static String aws_folder_path = "C:\\Users\\user\\.aws";
 
     final static int MAX_WORKER_INSTANCES = 18;
+
+    final static String JAR_BUCKET = "jars-1763844625474";
 }
