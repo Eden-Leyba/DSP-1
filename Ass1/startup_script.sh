@@ -1,4 +1,4 @@
-sudo rm /home/ec2-user/.aws/labuser.pem
+sudo rm -f /home/ec2-user/.aws/labsuser.pem
 sudo mv /home/ec2-user/credentials /home/ec2-user/.aws/credentials
 aws s3 cp s3://$1/$2 /home/ec2-user/app.jar
 cd /home/ec2-user

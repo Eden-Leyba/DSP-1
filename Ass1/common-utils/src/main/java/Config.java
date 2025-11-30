@@ -15,4 +15,6 @@ public class Config {
     final static String aws_folder_path = "C:\\Users\\edenl\\.aws";
 
     final static int MAX_WORKER_INSTANCES = 18;
+
+    final static String JAR_BUCKET = "jars-1763844625474";
 }
