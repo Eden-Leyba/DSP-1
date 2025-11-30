@@ -62,14 +62,15 @@ public class Worker {
 
             final int   captured_segment_idx = segment_idx,
                         start_idx = entry.getKey(),
-                        end_idx = start_idx + num_parts - 1;
+                        end_idx = start_idx + segment_length - 1;
 
             String output_File_Name = "analysis_" + captured_segment_idx + "_" + input_File_to_analyze.getName();
             File output_analysis_file = new File(output_File_Name);
 
             Future<File> output_file = parsing_thread_pool.submit(() -> {
+                StanfordParser localParser = new StanfordParser(); // each thread its own
                 try (PrintWriter writer = new PrintWriter(new FileWriter(output_analysis_file))) {
-                    parser.parseTextBuffer(input_File_to_analyze, analysisType, writer, start_idx, end_idx);
+                    localParser.parseTextBuffer(input_File_to_analyze, analysisType, writer, start_idx, end_idx);
                 } catch (IOException e) {
                     System.err.println("Parser Error in ["+start_idx+","+end_idx+"]: " + e.getMessage());
                 }
@@ -103,8 +104,41 @@ public class Worker {
 
     public static void main(String[] args) throws IOException, InterruptedException {
 
-        int nThreads = Runtime.getRuntime().availableProcessors();
+        long start = System.nanoTime();
+        //int nThreads = Runtime.getRuntime().availableProcessors();
+        int nThreads = 2;  // start small and see if it runs
         parsing_thread_pool = Executors.newFixedThreadPool(nThreads);
+
+        // Download input file
+        File input_File_to_analyze = downloadUsingWget("https://www.gutenberg.org/files/1660/1660-0.txt");
+        //String textBuffer = Files.readString(input_File_to_analyze.toPath());
+
+        // Run parser in batches (Map-Reduce)
+        List<Future<File>> parser_result = runParser(input_File_to_analyze, "POS");
+        List<File> output_files = new ArrayList<>();
+        for (Future<File> f : parser_result) {
+            try {
+                output_files.add(f.get());
+            } catch (ExecutionException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        //When we reached here, all parsing tasks are finished
+        String outputFileName = "analysis" + input_File_to_analyze.getName();
+        File output_analysis_File = new File(outputFileName);
+        reduceFiles(output_files, output_analysis_File);
+
+        long end = System.nanoTime();
+        long durationNs = end - start;
+        System.out.println("Parsing execution time: " + (durationNs / 1_000_000.0) + " ms");
+
+    }
+
+    public static void main2(String[] args) throws IOException, InterruptedException {
+
+        int nThreads = Runtime.getRuntime().availableProcessors();
+        parsing_thread_pool = Executors.newFixedThreadPool(2);
 
         String workers_done_queue_url = AmazonUtils.SQS.getQueueURL(Config.workers_done_queue_name);
         String workers_incoming_queue_url = AmazonUtils.SQS.getQueueURL(Config.workers_incoming_queue_name);
