@@ -1,0 +1,6 @@
+POS https://gist.githubusercontent.com/rsmahmud/9f165b93e86f0ae67f9d4e921da256ed/raw/4b50033d6c21bfc8b4d3f9ba6752f94b919d44f6/country.txt
+CONSTITUENCY    https://gist.githubusercontent.com/rsmahmud/9f165b93e86f0ae67f9d4e921da256ed/raw/4b50033d6c21bfc8b4d3f9ba6752f94b919d44f6/country.txt
+DEPENDENCY  https://gist.githubusercontent.com/rsmahmud/9f165b93e86f0ae67f9d4e921da256ed/raw/4b50033d6c21bfc8b4d3f9ba6752f94b919d44f6/country.txt
+POS https://raw.githubusercontent.com/frictionlessdata/examples/refs/heads/main/README.md
+CONSTITUENCY https://raw.githubusercontent.com/frictionlessdata/examples/refs/heads/main/README.md
+DEPENDENCY https://raw.githubusercontent.com/frictionlessdata/examples/refs/heads/main/README.md

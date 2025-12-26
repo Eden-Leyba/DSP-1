@@ -41,10 +41,18 @@ public class WorkerListenerRunnable implements Runnable {
                 String analyzed_file_key = message_split[3];
                 String requested_analysis = message_split[4];
 
-                //Append to the S3 output file of the local the line:
-                // <analysis type>: <input file link> <output file link>
-                String analyzed_file_url = AmazonUtils.S3.getFileUrl(worker_bucket_name, analyzed_file_key);
-                String new_summary_line = requested_analysis + ": " + input_file_to_analyze_url + " " + analyzed_file_url;
+                String new_summary_line = "";
+                if(worker_bucket_name.equals("ERROR") && analyzed_file_key.equals("ERROR")) {
+                    //An error for the worker
+                    //Message format is: <analysis type>: <input file link> Error Parsing: <error description>
+                    new_summary_line = requested_analysis + ": " + input_file_to_analyze_url + " Error Parsing: " + message_split[5];
+                }
+                else {
+                    //Append to the S3 output file of the local the line:
+                    // <analysis type>: <input file link> <output file link>
+                    String analyzed_file_url = worker_bucket_name + "/" + analyzed_file_key;
+                    new_summary_line = requested_analysis + ": " + input_file_to_analyze_url + " " + analyzed_file_url + "\n";
+                }
 
                 Map<String, AttributeValue> item = AmazonUtils.DynamoDB.getEntry(local_id);
                 String summary_bucket = item.get("output_summary_s3_bucketname").s();
@@ -54,15 +62,15 @@ public class WorkerListenerRunnable implements Runnable {
 
                 //Increment num_done in locals
                 AmazonUtils.DynamoDB.incrementNumDone(local_id);
+                AmazonUtils.SQS.DeleteMessage(workers_done_tasks_queue_url, messageFromWorker);
+
+                //if local is done
                 if(Integer.parseInt(item.get("num_urls").n()) == Integer.parseInt(item.get("num_done").n()) + 1) {
-                    //Local is done
                     String messageToClient = local_id + "\n" + summary_bucket + "\n" + summary_key;
                     AmazonUtils.SQS.sendMessage(locals_input_queue_url, messageToClient);
-
-                    AmazonUtils.SQS.DeleteMessage(workers_done_tasks_queue_url, messageFromWorker);
                     AmazonUtils.DynamoDB.deleteEntry(local_id);
-
                 }
+
             }
 
             //check if we need to terminate

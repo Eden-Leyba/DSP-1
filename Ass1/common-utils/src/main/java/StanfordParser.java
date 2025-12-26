@@ -10,6 +10,7 @@ import java.io.*;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
 public class StanfordParser {
@@ -41,63 +42,81 @@ public class StanfordParser {
             return -1;
         }
 
-        DocumentPreprocessor tokenizer =
-                new DocumentPreprocessor(new BufferedReader(new FileReader(file_to_analyze )));
+        List<List<HasWord>> sentences = initTokenizer(file_to_analyze);
 
         int sentenceId = 1;
-        for (List<HasWord> sentence : tokenizer) {
+        for (List<HasWord> _ : sentences) {
             sentenceId++;
         }
 
         return sentenceId;
     }
 
-    public void parseTextBuffer(File file_to_analyze ,
-                                AnalysisType analysisType,
-                                PrintWriter writer) throws FileNotFoundException {
+    private void parseSentence(List<HasWord> sentence, AnalysisType analysisType, PrintWriter writer) {
+        Tree parse = lp.apply(sentence);
+        switch (analysisType) {
+            case POS:
+                writePOS(parse, writer);
+                break;
+            case CONSTITUENCY:
+                writeConstituency(parse, writer);
+                break;
+            case DEPENDENCY:
+                writeDependencies(parse, writer);
+                break;
+        }
+        writer.println();
+        writer.flush();
+    }
 
+    private DocumentPreprocessor initDocumentPreprocessor(File file_to_analyze) throws FileNotFoundException {
         if (file_to_analyze == null ) {
-            return;
+            return null;
         }
 
-        DocumentPreprocessor tokenizer =
-                new DocumentPreprocessor(new BufferedReader(new FileReader(file_to_analyze )));
+        BufferedReader br = new BufferedReader(new FileReader(file_to_analyze));
+        ParagraphInjectingReader pir = new ParagraphInjectingReader(br);
+        PushbackReader pushbackReader = new PushbackReader(pir, 8192);
+
+        return new DocumentPreprocessor(pir);
+    }
+
+    public List<List<HasWord>> initTokenizer(File file_to_analyze) throws FileNotFoundException {
+        DocumentPreprocessor tokenizer = initDocumentPreprocessor(file_to_analyze);
+
+        tokenizer.setSentenceFinalPuncWords(new String[]{".", "?", "!", "!!", "!!!", "??", "?!", "!?", ";"});
+
+        List<List<HasWord>> result = new ArrayList<>();
 
         int sentenceId = 1;
         for (List<HasWord> sentence : tokenizer) {
-//            if(sentenceId < first_sentence_idx) {
-//                sentenceId++;
-//                continue;
-//            }
-//
-//            if(sentenceId > last_sentence_idx) {
-//                break;
-//            }
+            result.add(sentence);
+            sentenceId++;
+        }
 
-            System.out.println("Sentence " + sentenceId);
+        return result;
+    }
 
-            writer.println("--- Sentence " + sentenceId + " ---");
+    public void parseTextBuffer(List<List<HasWord>> sentences, AnalysisType analysisType, PrintWriter writer, int sentence_start_idx, int sentence_end_idx) {
 
-            Tree parse = lp.apply(sentence);
-
-            switch (analysisType) {
-                case POS:
-                    writePOS(parse, writer);
-                    break;
-                case CONSTITUENCY:
-                    writeConstituency(parse, writer);
-                    break;
-                case DEPENDENCY:
-                    writeDependencies(parse, writer);
-                    break;
+        int sentenceId = sentence_start_idx;
+        for(List<HasWord> sentence : sentences) {
+            if(sentenceId > sentence_end_idx) {
+                break;
             }
-
-            writer.println();
-            writer.flush();
-
+            if (sentence == null || sentence.isEmpty()) {
+                System.out.println("Sentence " + sentenceId);
+                writer.println("--- Sentence " + sentenceId + " ---");
+                sentenceId++;
+                continue;
+            }
+            System.out.println("Sentence " + sentenceId);
+            writer.println("--- Sentence " + sentenceId + " ---");
+            parseSentence(sentence, analysisType, writer);
             sentenceId++;
         }
     }
+
 
     private void writePOS(Tree parse, PrintWriter writer) {
         writer.print("[POS]: ");
@@ -120,3 +139,4 @@ public class StanfordParser {
         writer.println(tdl);
     }
 }
+

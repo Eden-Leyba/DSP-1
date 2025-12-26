@@ -1,18 +1,13 @@
 Assignment 1 - Whats Left
 
+Exceptions!!
+
 Local App
 
 The Manager
-In SubmitLocalTaskToThreadPool(): Launching the EC2 Workers should be at last priority (There is no data there, it takes time)
-- Properly start Worker EC2 clients
-- LocalThreadTask: What if its not a small file? (Switch to BufferedReader)
-- Database: locals_db: local_id, num_urls, num_done, output_summary_s3_path
-	1. Manager Main class should create database
-- WorkersOutput Thread
-- Terminate 
-
+- Manager Main class should create database
+- Encrypt labsuser.pem
 Worker
-- Move to 2 threads
 
 Testing
 - OK

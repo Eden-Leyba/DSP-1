@@ -52,9 +52,9 @@ public class LocalsListenerRunnable implements Runnable {
             }
 
             for (Message msg : messages) {
-                System.out.println("Received message: " + msg.body());
+                System.out.println("Received message: " + msg.body().replaceAll("\n", ";"));
 
-                if(msg.equals(Config.msg_terminate_string)) {
+                if(msg.body().equals(Config.msg_terminate_string)) {
                     terminate = true;
                     //rewrite terminate.txt
                     Path path = Paths.get("terminate.txt");
@@ -70,7 +70,11 @@ public class LocalsListenerRunnable implements Runnable {
 
                     //send message to workers to terminate
                     AmazonUtils.SQS.sendMessage(workers_input_queue_url, Config.msg_terminate_string);
-
+                    try {
+                        AmazonUtils.EC2.terminateMyself();
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
                     break;
                 }
                 else {
@@ -121,12 +125,10 @@ public class LocalsListenerRunnable implements Runnable {
             try {
                 AmazonUtils.EC2.LaunchMultipleInstances(
                         amiId,
-                        InstanceType.T3_SMALL,
+                        InstanceType.T3_LARGE,
                         Config.instances_tag_name, Config.worker_role_value,
                         "jars-1763844625474", "Worker.jar",
-                        num_workers_to_start, 1,
-                        false,
-                        "/home/ec2-user/.aws"
+                        num_workers_to_start, 1
                 );
             } catch (Ec2Exception e) {
                 if(e.awsErrorDetails().errorCode().equals("InsufficientInstanceCapacity")) {

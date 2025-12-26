@@ -1,12 +1,26 @@
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.*;
 
 public class Manager {
 
     static Thread workersThread;
     static Thread localsListenerThread;
+
+    private static void readConfigFile() throws IOException {
+        List<String> config_file_lines = Files.readAllLines(Paths.get(Config.config_file_name));
+        Map<String, String> config_file_lines_map = new HashMap<>();
+        for(String line : config_file_lines) {
+            String key = line.split("=")[0];
+            String value = line.split("=")[1];
+            config_file_lines_map.put(key, value);
+        }
+    }
 
     public static void main(String[] args)
     {

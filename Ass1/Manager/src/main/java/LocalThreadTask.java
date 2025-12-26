@@ -1,7 +1,10 @@
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.Callable;
@@ -22,41 +25,58 @@ public class LocalThreadTask implements Callable<Integer> {
         this.n = n;
     }
 
-    public Integer call() {
+    private int readInputFile() {
         //Download the input from S3
-        String input_file_content = "";
+        BufferedReader reader = null;
         try {
-            //TODO: what if its not a small file?
-            input_file_content = AmazonUtils.S3.getSmallFile(this.bucket_name, this.key);
+            InputStream s3Stream = AmazonUtils.S3.getFileStream(this.bucket_name, this.key);
+            reader = new BufferedReader(new InputStreamReader(s3Stream));
+
+            String line;
+            int num_files_to_process = 0;
+
+            while ((line = reader.readLine()) != null) {
+
+                line = line.replaceAll("\\s+", " ").trim();
+                if (line.isEmpty() || line.equals(" ")) {
+                    continue;
+                }
+
+                line = line.replaceAll(" ", "\n");
+                String message = local_id + "\n" + line;
+
+                AmazonUtils.SQS.sendMessage(workers_inoming_tasks_queue_url, message);
+                System.out.println("Sent message: " + message.replaceAll("\n", ";"));
+                num_files_to_process++;
+            }
+
+            return num_files_to_process;
+
         } catch (IOException e) {
             System.err.println("IOException: " + e.getMessage());
             System.exit(1);
-        }
-        catch (S3Exception e) {
+            return -1;
+        } catch (S3Exception e) {
             System.err.println("AWS S3 error: " + e.awsErrorDetails().errorMessage());
             System.exit(1);
-        }
-        catch (SdkClientException e) {
+            return -1;
+        } catch (SdkClientException e) {
             System.err.println("Client-side error: " + e.getMessage());
             System.exit(1);
-        }
-
-        int num_files_to_process = 0;
-        String[] content = input_file_content.split("\n");
-        for(String line : content) {
-            line = line.replaceAll("\\s+", " ").trim();
-            if(line.isEmpty() || line.equals(" ")) {
-                continue;
+            return -1;
+        } finally {
+            if (reader != null) {
+                try { reader.close(); } catch (IOException ignored) {}
             }
-
-            line = line.replaceAll(" ", "\n");
-            String message = local_id + "\n" + line;
-
-            AmazonUtils.SQS.sendMessage(workers_inoming_tasks_queue_url, message);
-            System.out.println("Sent message: " + message);
-            num_files_to_process++;
         }
 
+
+    }
+
+    public Integer call() {
+        int num_files_to_process = readInputFile();
+        if(num_files_to_process == -1)
+            return -1;
 
         int m = (int) ((float) (num_files_to_process/n) + 0.5);
 

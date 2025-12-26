@@ -1,17 +1,17 @@
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.OutputStreamWriter;
+import java.io.*;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import software.amazon.awssdk.core.ResponseBytes;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
@@ -130,14 +130,23 @@ public class AmazonUtils {
                         s3.getObject(request, ResponseTransformer.toBytes());
 
                 return new String(objectBytes.asByteArray());
-//                System.out.println("Object content:");
-//                System.out.println(text);
 
             } catch (S3Exception e) {
                 System.err.println("S3 error: " + e.awsErrorDetails().errorMessage());
             }
 
             return "";
+        }
+
+        public static InputStream getFileStream(String bucketName, String key) throws S3Exception, SdkClientException {
+            GetObjectRequest request = GetObjectRequest.builder()
+                    .bucket(bucketName)
+                    .key(key)
+                    .build();
+
+            ResponseInputStream<GetObjectResponse> s3Stream = s3.getObject(request);
+
+            return s3Stream;
         }
 
         private static void putObject(String bucketName, String key, File file)
@@ -262,7 +271,7 @@ public class AmazonUtils {
                     .messageBody(message)
                     .build();
             sqs.sendMessage(sendReq);
-            System.out.println("Sent message: " + message);
+            System.out.println("Sent message: " + message.replaceAll("\n", ";"));
         }
 
         public static void DeleteMessage(String queueUrl, Message msg) throws SqsException, SdkClientException{
@@ -326,21 +335,41 @@ public class AmazonUtils {
             ec2.close();
         }
 
-        /**
-         * Returns number of ec2 instances created and launched
-         * @param ami_id
-         * @param instanceType
-         * @param tag_name
-         * @param tag_value
-         * @param jar_bucket
-         * @param jar_key
-         * @param maxCount
-         * @param minCount
-         * @return
-         * @throws Ec2Exception
-         * @throws IOException
-         * @throws InterruptedException
-         */
+
+        public static String getInstanceId() throws Exception {
+            HttpClient client = HttpClient.newHttpClient();
+
+            // 1. Get IMDSv2 token
+            HttpRequest tokenRequest = HttpRequest.newBuilder()
+                    .uri(URI.create("http://169.254.169.254/latest/api/token"))
+                    .header("X-aws-ec2-metadata-token-ttl-seconds", "21600")
+                    .method("PUT", HttpRequest.BodyPublishers.noBody())
+                    .build();
+
+            String token = client.send(tokenRequest, HttpResponse.BodyHandlers.ofString()).body();
+
+            // 2. Use the token to fetch the instance ID
+            HttpRequest idRequest = HttpRequest.newBuilder()
+                    .uri(URI.create("http://169.254.169.254/latest/meta-data/instance-id"))
+                    .header("X-aws-ec2-metadata-token", token)
+                    .GET()
+                    .build();
+
+            return client.send(idRequest, HttpResponse.BodyHandlers.ofString()).body();
+        }
+
+        public static void terminateMyself() throws Exception {
+            String instanceId = getInstanceId();
+            System.out.println("Terminating instance: " + instanceId);
+
+            TerminateInstancesRequest req = TerminateInstancesRequest.builder()
+                    .instanceIds(instanceId)
+                    .build();
+
+            ec2.terminateInstances(req);
+            System.out.println("TerminateInstances request sent.");
+        }
+
         public static int LaunchMultipleInstances(
                 String ami_id,
                 InstanceType instanceType,
@@ -349,270 +378,46 @@ public class AmazonUtils {
                 String jar_bucket,
                 String jar_key,
                 int maxCount,
-                int minCount,
-                boolean copy_pem,
-                String aws_folder_path
+                int minCount
         ) throws Ec2Exception, IOException, InterruptedException{
-            String bash_script = Files.readString(Path.of("startup_script.sh"));
+            int vcpus = 1;
+            try {
+                vcpus = getVCpus(instanceType);
+            } catch (RuntimeException _) {}
+            String info_config_txt = "vcpus=" + vcpus + "\n";
 
-            String copy_pem_script = "";
-
-            if(copy_pem) {
-                String pem_script = Files.readString(Path.of("pem_script.sh"));
-                copy_pem_script =
-                        "echo '" + pem_script + "' >> /home/ec2-user/pem_script.sh\n" +
-                        "chmod +x pem_script.sh\n";
-            }
-
-            String script =
-                    "#!/bin/bash\n" +
-                    "mkdir /home/ec2-user/.aws \n"+
-                    "echo '" + bash_script + "' >> /home/ec2-user/startup_script.sh\n" +
-                    "chmod +x startup_script.sh\n" +
-                    copy_pem_script +
-                    "sudo su\n" +
-                    "yum update -y\n" +
-                    "yum install -y java-25-amazon-corretto-headless awscli\n";
+            String user_data_script = "#!/bin/bash -xe\n" +
+                    "sudo yum update -y\n" +
+                    "sudo yum install -y java-25-amazon-corretto-headless awscli\n" +
+                    "echo '" + info_config_txt + "' >> /home/ec2-user/"+ Config.config_file_name +"\n" +
+                    "aws s3 cp s3://"+ jar_bucket +"/"+ jar_key +" /home/ec2-user/file.jar\n"+
+                    "cd /home/ec2-user\n"+
+                    "nohup java -Xmx2g -Xms1g -jar file.jar > app.log 2>&1 &\n";
 
             RunInstancesRequest runRequest = RunInstancesRequest.builder()
                     .instanceType(instanceType)
                     .imageId(ami_id)
                     .maxCount(maxCount)
                     .minCount(minCount)
+                    .userData(Base64.getEncoder().encodeToString(user_data_script.getBytes()))
                     .keyName("labsuser")
-                    .userData(Base64.getEncoder().encodeToString(script.getBytes()))
+                    .tagSpecifications(TagSpecification.builder().resourceType(ResourceType.INSTANCE).tags(Tag.builder().key(tag_name).value(tag_value).build()).build())
+                    .iamInstanceProfile(IamInstanceProfileSpecification.builder().name("LabInstanceProfile").build())
                     .build();
 
-            String[] publicIps = LaunchOneOrMoreInstancesUsingRequest(
-                    runRequest, tag_name, tag_value
-            );
-
-            System.out.println("Reached here");
-            Thread.sleep(15_000);
-            RunJarOnRunningInstance(publicIps, jar_bucket, jar_key, copy_pem, aws_folder_path);
-            System.out.println("Reached here jarsssssssssss");
-            return publicIps.length;
+            RunInstancesResponse response = ec2.runInstances(runRequest);
+            return response.instances().size();
         }
 
-        /**
-         * Returns 1 if created, 0 if not
-         * @param ami_id
-         * @param instanceType
-         * @param tag_name
-         * @param tag_value
-         * @param jar_bucket
-         * @param jar_key
-         * @return
-         * @throws Ec2Exception
-         * @throws IOException
-         * @throws InterruptedException
-         */
         public static int LaunchSingleInstance(
                 String ami_id,
                 InstanceType instanceType,
                 String tag_name,
                 String tag_value,
                 String jar_bucket,
-                String jar_key,
-                boolean copy_pem,
-                String aws_folder_path
+                String jar_key
         ) throws Ec2Exception, IOException, InterruptedException {
-            return LaunchMultipleInstances(ami_id, instanceType, tag_name, tag_value, jar_bucket, jar_key, 1, 1, copy_pem, aws_folder_path);
-        }
-
-        /**
-         * Returns publicIps array of each ec2 instance launched
-         * @param runInstancesRequest
-         * @param tag_name
-         * @param tag_value
-         * @return
-         * @throws Ec2Exception
-         */
-        private static String[] LaunchOneOrMoreInstancesUsingRequest(
-                RunInstancesRequest runInstancesRequest,
-                String tag_name,
-                String tag_value
-        ) throws Ec2Exception {
-            RunInstancesResponse response = ec2.runInstances(runInstancesRequest);
-
-            List<String> instance_ids = new ArrayList<>();
-            for(Instance instance : response.instances()) {
-                String instanceId = instance.instanceId();
-
-                Tag tag = Tag.builder()
-                        .key(tag_name)
-                        .value(tag_value)
-                        .build();
-
-                CreateTagsRequest tagRequest = CreateTagsRequest.builder()
-                        .resources(instanceId)
-                        .tags(tag)
-                        .build();
-
-                ec2.createTags(tagRequest);
-
-                instance_ids.add(instanceId);
-            }
-
-            int num_instances = instance_ids.size();
-            System.out.printf("Successfully started %d EC2 instance(s)\n", num_instances);
-
-            String[] publicIps = new String[num_instances];
-            for (int i = 0; i < num_instances; i++) {
-                publicIps[i] =  ec2.describeInstances(
-                                    DescribeInstancesRequest.builder()
-                                        .instanceIds(instance_ids.get(i))
-                                        .build()
-                                )
-                                .reservations().get(0)
-                                .instances().get(0)
-                                .publicIpAddress();
-            }
-
-            return publicIps;
-        }
-
-        private static void RunJarOnRunningInstance(
-                String[] publicIps,
-                String jar_bucket,
-                String jar_key,
-                boolean copy_pem,
-                String aws_folder_path
-        ) throws InterruptedException, IOException {
-            if(publicIps.length == 0) {
-                throw new IllegalArgumentException("RunJarOnRunningInstances: No public IP address specified");
-            }
-            //TODO: maybe do it in threads?
-            for(String publicIp : publicIps) {
-                Runnable runEC2Code = () -> {
-                    try {
-                        String public_ip_for_ssh = publicIp.replaceAll("\\.", "-");
-
-                        if(copy_pem) {
-                            ProcessBuilder scp_command_to_pem = new ProcessBuilder(
-                                    "scp",
-                                    "-o", "StrictHostKeyChecking=no",
-                                    "-i",
-                                    aws_folder_path + File.separator + "labsuser.pem",
-                                    aws_folder_path + File.separator + "labsuser.pem",
-                                    "ec2-user@" + publicIp + ":/home/ec2-user/labsuser.pem"
-                            );
-                            scp_command_to_pem.inheritIO().start().waitFor();
-
-                            ProcessBuilder ssh_pem_command = new ProcessBuilder(
-                                    "ssh",
-                                    "-o", "StrictHostKeyChecking=no",
-                                    "-i", aws_folder_path + File.separator + "labsuser.pem",
-                                    "ec2-user@ec2-" + public_ip_for_ssh + ".compute-1.amazonaws.com",
-                                    "bash ~/pem_script.sh "
-                            );
-                            int exitCode = ssh_pem_command.inheritIO().start().waitFor(); // just waits for SSH + script, not for the JAR
-                            System.out.println("SSH exited with code " + exitCode);
-                        }
-                        ProcessBuilder scp_command = new ProcessBuilder(
-                                "scp",
-                                "-o", "StrictHostKeyChecking=no",
-                                "-i",
-                                aws_folder_path + File.separator + "labsuser.pem",
-                                aws_folder_path + File.separator + "credentials",
-                                "ec2-user@" + publicIp + ":/home/ec2-user/credentials"
-                        );
-                        scp_command.inheritIO().start().waitFor();
-
-
-                        ProcessBuilder ssh_command = new ProcessBuilder(
-                                "ssh",
-                                "-o", "StrictHostKeyChecking=no", //ignore the error of host is not in the hosts file
-                                "-i", aws_folder_path + File.separator + "labsuser.pem",
-                                "ec2-user@ec2-" + public_ip_for_ssh + ".compute-1.amazonaws.com",
-                                "bash ~/startup_script.sh " + jar_bucket + " " + jar_key   // bash will read commands from stdin
-                        );
-                        int exitCode = ssh_command.inheritIO().start().waitFor(); // just waits for SSH + script, not for the JAR
-                        System.out.println("SSH exited with code " + exitCode);
-                    }
-                    catch (Exception e) {
-                        e.printStackTrace();
-                    }
-                };
-                Thread t = new Thread(runEC2Code);
-                t.start();
-//                ssh_command.redirectErrorStream(true);
-
-//                Process p = ssh_command.inheritIO().start();
-//                try (var writer = new java.io.OutputStreamWriter(p.getOutputStream())) {
-//                    writer.write(
-//                            "sudo mv /home/ec2-user/credentials /home/ec2-user/.aws/credentials\n" +
-//                                    "aws s3 cp s3://" + jar_bucket + "/" + jar_key + " /home/ec2-user/app.jar\n" +
-//                                    "cd /home/ec2-user\n" +
-//                                    "sudo yum install -y java-25-amazon-corretto-headless\n" +
-//                                    "nohup java -jar app.jar > app.log 2>&1 &\n" +
-//                                    "echo DONE STARTING APP\n"
-//                    );
-//                    writer.flush();
-//                }
-
-//
-//                ProcessBuilder ssh_command = new ProcessBuilder(
-//                        "ssh",
-//                        "-o", "StrictHostKeyChecking=no",
-//                        "-i", Config.aws_folder_path + "\\labsuser.pem",
-//                        "ec2-user@ec2-" + public_ip_for_ssh + ".compute-1.amazonaws.com",
-//                        "bash << 'EOF'\n" +
-//                        "sudo mv /home/ec2-user/credentials /home/ec2-user/.aws/credentials\n" +
-//                        "aws s3 cp s3://"+ jar_bucket +"/"+ jar_key +" /home/ec2-user/app.jar\n" +
-//                        "cd /home/ec2-user\n" +
-//                        "sudo yum install -y java-25-amazon-corretto-headless \n" +
-////                        "nohup java -jar app.jar > app.log 2>&1 &\n" +
-//                        "nohup sleep 600 > test.log 2>&1 &\n" +
-//                        "nohup echo \"HELLO FROM EC2\" > /home/ec2-user/app.log 2>&1 &\n" +
-//                        "EOF"
-//                );
-//                ssh_command.inheritIO().start().waitFor();
-            }
-        }
-
-        //TODO: delete
-        public static String RunEC2InstanceWithSpecificTag(String ami_id, String tag_name, String tag_value, String data_script) throws Ec2Exception {
-//            String amiId = "ami-0cae6d6fe6048ca2c";
-
-//            String script = "echo 'This machine is running'"; //run the manager jar
-            RunInstancesRequest runRequest = RunInstancesRequest.builder()
-                    .instanceType(InstanceType.T1_MICRO)
-                    .imageId(ami_id)
-                    .maxCount(1)
-                    .minCount(1)
-                    .keyName("labsuser")
-                    .userData(Base64.getEncoder().encodeToString(data_script.getBytes()))
-                    .build();
-
-            RunInstancesResponse response = ec2.runInstances(runRequest);
-
-            String instanceId = response.instances().get(0).instanceId();
-
-
-            Tag tag = Tag.builder()
-                    .key(tag_name)
-                    .value(tag_value)
-                    .build();
-
-            CreateTagsRequest tagRequest = CreateTagsRequest.builder()
-                    .resources(instanceId)
-                    .tags(tag)
-                    .build();
-
-            ec2.createTags(tagRequest);
-            System.out.printf(
-                    "Successfully started EC2 Manager instance %s based on AMI %s\n",
-                    instanceId, ami_id);
-
-            String publicIp = ec2.describeInstances(
-                            DescribeInstancesRequest.builder()
-                                    .instanceIds(instanceId)
-                                    .build()
-                    ).reservations().get(0)
-                    .instances().get(0)
-                    .publicIpAddress();
-            return publicIp;
+            return LaunchMultipleInstances(ami_id, instanceType, tag_name, tag_value, jar_bucket, jar_key, 1, 1);
         }
 
         // Return the number of EC2 instances which are running with the provided tag
@@ -645,6 +450,23 @@ public class AmazonUtils {
             System.out.println("Terminate signal sent to instance: " + instanceId);
         }
 
+        public static int getVCpus(InstanceType instanceType) throws RuntimeException {
+
+            DescribeInstanceTypesRequest req = DescribeInstanceTypesRequest.builder()
+                    .instanceTypes(instanceType)
+                    .build();
+
+            DescribeInstanceTypesResponse res = ec2.describeInstanceTypes(req);
+
+            if (res.instanceTypes().isEmpty()) {
+                throw new RuntimeException("getVCpus(): InstanceType not found: " + instanceType);
+            }
+
+            InstanceTypeInfo info = res.instanceTypes().get(0);
+
+            return info.vCpuInfo().defaultVCpus();
+        }
+
     }
 
     public static class DynamoDB {
@@ -662,7 +484,7 @@ public class AmazonUtils {
             GetItemRequest request = GetItemRequest.builder()
                     .tableName(table_name)
                     .key(Map.of(
-                            "localId", AttributeValue.fromN(String.valueOf(localId)) // primary key
+                            "local_id", AttributeValue.fromN(String.valueOf(localId)) // primary key
                     ))
                     .build();
 
@@ -726,8 +548,4 @@ public class AmazonUtils {
             System.out.println("Incremented num_done for " + localId);
         }
     }
-
-
-
 }
-

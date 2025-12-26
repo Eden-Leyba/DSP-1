@@ -13,6 +13,7 @@ import software.amazon.awssdk.services.sqs.model.SqsException;
 import java.io.*;
 import java.net.URL;
 import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
@@ -29,10 +30,21 @@ public class LocalApp {
 
     private static Thread managerChecker;
 
+    private static boolean do_terminate = false;
+    private static volatile boolean found_done_msg = false;
+
     private static void checkIfManagerRunning(boolean createQueues) {
         //Checks if a Manager node is active on the EC2 cloud. If it is not, the application will start the
         //manager node.
-        if (AmazonUtils.EC2.getIdsEC2WithTagRunning(Config.instances_tag_name, Config.manager_role_value).size() == 1) {
+        int num_manager_instances_running = 0;
+        try {
+            num_manager_instances_running = AmazonUtils.EC2.getIdsEC2WithTagRunning(Config.instances_tag_name, Config.manager_role_value).size();
+        } catch (IllegalStateException e) {
+            System.err.println("Cannot process getIdsEC2WithTagRunning(): AWS ec2 object closed!");
+            return;
+        }
+
+        if (num_manager_instances_running == 1) {
             System.out.println("Manager is running!");
         }
         else
@@ -44,9 +56,7 @@ public class LocalApp {
                         InstanceType.T3_MICRO,
                         Config.instances_tag_name, Config.manager_role_value,
                         "jars-1763844625474",
-                        "Manager.jar",
-                        true,
-                        Config.aws_folder_path
+                        "Manager.jar"
                 );
 
                 System.out.println("Launched: " + launched);
@@ -74,7 +84,7 @@ public class LocalApp {
 
     private static void uploadInputFile(String inputFileName, String bucket_name, String key) {
 
-        System.out.println("bucket: " + bucket_name);
+        System.out.println("Uploading file to bucket: " + bucket_name + " and key: " + key);
         try {
             AmazonUtils.S3.createBucket(bucket_name);
         } catch(S3Exception | SdkClientException e) {
@@ -101,18 +111,22 @@ public class LocalApp {
         String message = Config.msg_terminate_string;
         AmazonUtils.SQS.sendMessage(locals_output_queue_url ,message);
 
-        //terminate manager(s)
-        List<String> running_manager_ids = AmazonUtils.EC2.getIdsEC2WithTagRunning(Config.instances_tag_name, Config.worker_role_value);
-        if(running_manager_ids.size() > 1) {
-            System.err.println("Important Error! Seems like we have 2 or more managers fighting for control!");
-        }
-        for(String id : running_manager_ids) {
-            AmazonUtils.EC2.terminateInstance(id);
-        }
+//        try {
+//            Thread.sleep(10_000);
+//        } catch (InterruptedException _) {}
+//        //terminate manager(s)
+//        List<String> running_manager_ids = AmazonUtils.EC2.getIdsEC2WithTagRunning(Config.instances_tag_name, Config.manager_role_value);
+//        if(running_manager_ids.size() > 1) {
+//            System.out.println("Important Error! Seems like we have 2 or more managers fighting for control!");
+//        }
+//        for(String id : running_manager_ids) {
+//            AmazonUtils.EC2.terminateInstance(id);
+//        }
     }
 
     public static void main(String[] args) {
-        if(args.length < 3) {
+        long start = System.nanoTime();
+        if(args.length < 3 || args.length > 4) {
             System.err.println("Usage: <input_File_to_analyze> <output_analysis_file> <n> <optional terminate>");
             System.exit(1);
         }
@@ -122,7 +136,6 @@ public class LocalApp {
         int     n               = Integer.parseInt(args[2]);
 
         String terminate = "";
-        boolean do_terminate = false;
         if(args.length > 3) {
             terminate = args[3];
             if(terminate.equals(Config.args_terminate_string)) {
@@ -136,12 +149,16 @@ public class LocalApp {
 
         checkIfManagerRunning(true);
         managerChecker = new Thread(() -> {
-            try {
-                Thread.sleep(60_000);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
+            while(!found_done_msg) {
+                try {
+                    Thread.sleep(60_000);
+                } catch (InterruptedException e) {
+                    System.out.println("Manager Checker interrupted");
+                }
+
+                if(!found_done_msg)
+                    checkIfManagerRunning(false);
             }
-            checkIfManagerRunning(false);
         });
 
         locals_output_queue_url =  AmazonUtils.SQS.getQueueURL(Config.locals_output_queue_name);
@@ -163,7 +180,7 @@ public class LocalApp {
         // Sends a message to an SQS queue, stating the location of the file on S3
         String message_body = bucket_name + "\n" + key + "\n" + n;
         AmazonUtils.SQS.sendMessage(locals_output_queue_url ,message_body);
-        System.out.println("Sent message: " + message_body);
+        System.out.println("Sent message: " + message_body.replaceAll("\n",";"));
 
         // Checks an SQS queue for a message indicating the process is done and the response (the
         //summary file) is available on S3.
@@ -174,8 +191,8 @@ public class LocalApp {
                 .visibilityTimeout(5) // give yourself time to check
                 .build();
 
-        //todo: Run occasional checks to see the manager is running, and if its not, launch it. (Recurring Job)
-        boolean found_done_msg = false;
+        managerChecker.start();
+
         while(!found_done_msg) {
             SqsClient sqs = SqsClient.builder().region(Config.region).build();
             List<Message> messages = sqs.receiveMessage(receiveRequest).messages();
@@ -204,12 +221,15 @@ public class LocalApp {
                 }
             }
 
-            managerChecker.start();
+
         }
 
         //Here the output file is ready
         if(do_terminate)
             terminate();
+
+        long end = System.nanoTime();
+        System.out.println("Time: " + (end - start) / 1_000_000.0 + " ms");
 
         AmazonUtils.EC2.CloseEc2Client();
     }
@@ -223,6 +243,9 @@ public class LocalApp {
 
         for (Bucket bucket : bucketsResponse.buckets()) {
             String bucketName = bucket.name();
+
+            if(bucketName.equals(Config.JAR_BUCKET))
+                continue;
 
             try {
                 // List all objects in the bucket

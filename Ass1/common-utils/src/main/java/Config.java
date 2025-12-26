@@ -12,7 +12,6 @@ public class Config {
     final static String worker_role_value = "worker";
     final static String instances_tag_name = "Role";
 
-    final static String aws_folder_path = "C:\\Users\\edenl\\.aws";
 
     final static int MAX_WORKER_INSTANCES = 18;
 
@@ -20,4 +19,6 @@ public class Config {
 
     final static String args_terminate_string = "terminate";
     final static String msg_terminate_string = "terminate";
+
+    final static String config_file_name = "info.config.txt";
 }

@@ -21,7 +21,7 @@ public class TestInstance {
         String locals_output_queue_url =  AmazonUtils.SQS.getQueueURL(Config.locals_output_queue_name);
         String message_body = "dsp-1111111" + "\n" + "noa";
         AmazonUtils.SQS.sendMessage(locals_output_queue_url ,message_body);
-        System.out.println("Sent message: " + message_body);
+        System.out.println("Sent message: " + message_body.replaceAll("\n", ";"));
 
         File inputFile = new File("test.txt");
         String key = "local-app-" + "test.txt";

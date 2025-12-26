@@ -1,5 +1,3 @@
-//TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
-// click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
 import java.io.*;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -56,7 +54,7 @@ public class TestStanfordParser {
 
         // 1. Run parser for this mode
         try (PrintWriter writer = new PrintWriter(new FileWriter(outFile))) {
-            parser.parseTextBuffer(file, type, writer);
+//            parser.parseTextBuffer(file, type, writer);
         }
 
         // 2. Read back content and print first lines to console
