@@ -70,10 +70,11 @@ public class Worker {
             File output_analysis_file = new File(output_File_Name);
 
             Future<File> output_file = parsing_thread_pool.submit(() -> {
+                StanfordParser parser_per_thread = new StanfordParser();
                 System.out.println("Parsing from " + segment_start_idx + " to " + end_idx);
 
                 try (PrintWriter writer = new PrintWriter(new FileWriter(output_analysis_file))) {
-                    parser.parseTextBuffer(sentences, analysisType, writer, segment_start_idx, end_idx);
+                    parser_per_thread.parseTextBuffer(sentences, analysisType, writer, segment_start_idx, end_idx);
                 } catch (IOException e) {
                     System.err.println("Parser Error in ["+segment_start_idx+","+end_idx+"]: " + e.getMessage());
                 }
