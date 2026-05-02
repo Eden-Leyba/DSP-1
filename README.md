@@ -1,7 +1,10 @@
-# Text Analysis In The Cloud | Distributed Systems Programming Course | Assignment 1
+# Text Analysis In The Cloud 
 Eden Leyba 
+
 Noa Yaakov 
 ## 1. Introduction
+
+This is the first assignment in Distributed Systems Programming Course at BGU.
 
 This project implements a distributed text-analysis system deployed on Amazon Web Services (AWS).
 Each Local Application submits an input file containing multiple text‐file URLs together with their required analysis type (POS, Constituency, or Dependency).
