@@ -403,6 +403,4 @@ The system fully satisfies all requirements of the assignment:
 - Compliance with cloud computing best practices
 - Correct handling of multi-client scenarios and graceful termination
 
-This README documents the project’s architecture, design rationale, and operation at a professional, academic standard suitable for evaluation.
-
 ---
