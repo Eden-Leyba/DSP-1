@@ -1,4 +1,4 @@
-# About the project
+# Text Analysis In The Cloud | Distributed Systems Programming Course | Assignment 1
 Eden Leyba 
 Noa Yaakov 
 ## 1. Introduction
